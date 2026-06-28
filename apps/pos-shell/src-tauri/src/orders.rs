@@ -101,6 +101,8 @@ pub(crate) struct CompleteMockPaymentRequest {
     lines: Vec<CreateOrderSnapshotLine>,
     table_context: Option<CreateOrderSnapshotTableContext>,
     payment_method: String,
+    received_cash: Option<i64>,
+    change_given: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -110,6 +112,8 @@ pub(crate) struct CompletedMockPayment {
     payment_id: String,
     payment_method: String,
     amount: i64,
+    received_cash: Option<i64>,
+    change_given: Option<i64>,
     status: String,
     paid_at: i64,
 }
@@ -308,13 +312,26 @@ pub(crate) fn complete_mock_payment(
     let transaction = connection
         .transaction()
         .map_err(|error| format!("Could not start mock payment transaction: {error}"))?;
+    let payment_method = request.payment_method.clone();
+    let request_received_cash = request.received_cash;
+    let request_change_given = request.change_given;
     let order_request = CreateOrderSnapshotRequest {
         lines: request.lines,
         table_context: request.table_context,
     };
     let saved_order = save_table_order_snapshot(&transaction, &order_request, now)?;
+    validate_mock_payment_amounts(
+        &payment_method,
+        request_received_cash,
+        request_change_given,
+        saved_order.total,
+    )?;
     let payment_id = scoped_id("pay", now, 0);
-    let payment_method = request.payment_method.clone();
+    let (received_cash, change_given) = if payment_method == "CASH" {
+        (request_received_cash, request_change_given)
+    } else {
+        (None, None)
+    };
 
     // Mock payment: this only records a successful local payment.
     // No terminal, Wallee, acquirer or cash drawer integration is called here yet.
@@ -322,15 +339,17 @@ pub(crate) fn complete_mock_payment(
         .execute(
             "
             INSERT INTO payments (
-              id, order_id, amount, method, status, provider, provider_transaction_id,
-              provider_status, created_at
+              id, order_id, amount, received_cash, change_given, method, status,
+              provider, provider_transaction_id, provider_status, created_at
             )
-            VALUES (?1, ?2, ?3, ?4, 'COMPLETED', 'MOCK', NULL, 'MOCK_COMPLETED', ?5)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'COMPLETED', 'MOCK', NULL, 'MOCK_COMPLETED', ?7)
             ",
             params![
                 payment_id,
                 saved_order.id,
                 saved_order.total,
+                received_cash,
+                change_given,
                 payment_method,
                 now
             ],
@@ -362,6 +381,8 @@ pub(crate) fn complete_mock_payment(
         payment_id,
         payment_method: request.payment_method,
         amount: saved_order.total,
+        received_cash,
+        change_given,
         status: "COMPLETED".to_string(),
         paid_at: now,
     })
@@ -597,6 +618,32 @@ fn validate_mock_payment_request(request: &CompleteMockPaymentRequest) -> Result
 
     if request.payment_method != "CASH" && request.payment_method != "CARD_MANUAL" {
         return Err("Unsupported mock payment method.".to_string());
+    }
+
+    Ok(())
+}
+
+fn validate_mock_payment_amounts(
+    payment_method: &str,
+    received_cash: Option<i64>,
+    change_given: Option<i64>,
+    order_total: i64,
+) -> Result<(), String> {
+    if payment_method != "CASH" {
+        return Ok(());
+    }
+
+    let received_cash = received_cash
+        .ok_or_else(|| "Cash payments require received_cash.".to_string())?;
+    let change_given = change_given
+        .ok_or_else(|| "Cash payments require change_given.".to_string())?;
+
+    if received_cash < order_total {
+        return Err("Cash received cannot be lower than the order total.".to_string());
+    }
+
+    if change_given != received_cash - order_total {
+        return Err("Cash change_given must equal received_cash minus order total.".to_string());
     }
 
     Ok(())

@@ -17,7 +17,7 @@ import type {
   BasketLineVariant,
   CompletedMockPayment,
   CreatedOrderSnapshot,
-  MockPaymentMethod,
+  MockPaymentRequest,
   OpenTableOrderBasket,
   PosProduct,
   ProductCard,
@@ -398,7 +398,7 @@ export function CashRegisterScreen({
     setIsPaymentScreenOpen(true);
   }
 
-  async function handleCompleteMockPayment(paymentMethod: MockPaymentMethod) {
+  async function handleCompleteMockPayment(paymentRequest: MockPaymentRequest) {
     if (basketLines.length === 0 || isCompletingPayment || !tableContext) {
       return;
     }
@@ -410,13 +410,13 @@ export function CashRegisterScreen({
       const payment = await invoke<CompletedMockPayment>(
         "complete_mock_payment",
         {
-          request: {
-            lines: basketLines,
-            table_context: tableContext,
-            payment_method: paymentMethod,
+            request: {
+              lines: basketLines,
+              table_context: tableContext,
+              ...paymentRequest,
+            },
           },
-        },
-      );
+        );
 
       setBasketLines([]);
       setIsPaymentScreenOpen(false);
@@ -443,7 +443,7 @@ export function CashRegisterScreen({
         total={basketTotal}
         isSubmitting={isCompletingPayment}
         onCancel={() => setIsPaymentScreenOpen(false)}
-        onSelectMethod={(method) => void handleCompleteMockPayment(method)}
+        onSelectMethod={(payment) => void handleCompleteMockPayment(payment)}
       />
     );
   }

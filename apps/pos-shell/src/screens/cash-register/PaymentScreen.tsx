@@ -7,13 +7,13 @@ import { cn } from "@easytable/ui/lib/utils";
 import chipUrl from "../../assets/Chip.svg";
 import { TouchNumberPad } from "../../components/TouchNumberPad";
 import { formatChf } from "../../lib/money";
-import type { MockPaymentMethod } from "../../lib/pos-types";
+import type { MockPaymentMethod, MockPaymentRequest } from "../../lib/pos-types";
 
 type PaymentScreenProps = {
   total: number;
   isSubmitting: boolean;
   onCancel: () => void;
-  onSelectMethod: (method: MockPaymentMethod) => void;
+  onSelectMethod: (payment: MockPaymentRequest) => void;
 };
 
 type PaymentView = "methods" | "cash";
@@ -43,7 +43,7 @@ export function PaymentScreen({
       return;
     }
 
-    onSelectMethod(method);
+    onSelectMethod({ payment_method: method });
   }
 
   if (paymentView === "cash") {
@@ -136,7 +136,13 @@ export function PaymentScreen({
                 <Button
                   className="h-16 w-full rounded-md bg-indigo-500 text-lg font-black text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-600 disabled:bg-indigo-300"
                   disabled={!canCompleteCashPayment}
-                  onClick={() => onSelectMethod("CASH")}
+                  onClick={() =>
+                    onSelectMethod({
+                      payment_method: "CASH",
+                      received_cash: receivedAmount,
+                      change_given: changeAmount,
+                    })
+                  }
                 >
                   Abschliessen
                 </Button>

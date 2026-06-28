@@ -23,7 +23,17 @@ pub(crate) struct DayClosePreview {
     expected_total: i64,
     order_count: i64,
     item_count: i64,
+    product_sales: Vec<DayCloseProductSale>,
     existing_close: Option<ExistingDayClose>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DayCloseProductSale {
+    product_id: String,
+    product_name: String,
+    product_category: String,
+    quantity: i64,
+    total: i64,
 }
 
 #[derive(Serialize)]
@@ -84,6 +94,7 @@ pub(crate) fn get_day_close_preview(
     let connection = state.0.lock().map_err(|_| "Database lock poisoned".to_string())?;
     let window = business_day_window(&request.business_date, &request.business_day_cutover_time)?;
     let totals = query_day_close_totals(&connection, &window)?;
+    let product_sales = query_day_close_product_sales(&connection, &window)?;
     let existing_close = query_existing_day_close(&connection, &window.business_date)?;
 
     Ok(DayClosePreview {
@@ -96,6 +107,7 @@ pub(crate) fn get_day_close_preview(
         expected_total: totals.expected_cash + totals.expected_card,
         order_count: totals.order_count,
         item_count: totals.item_count,
+        product_sales,
         existing_close,
     })
 }
@@ -112,6 +124,7 @@ pub(crate) fn save_day_close(
     let connection = state.0.lock().map_err(|_| "Database lock poisoned".to_string())?;
     let window = business_day_window(&request.business_date, &request.business_day_cutover_time)?;
     let totals = query_day_close_totals(&connection, &window)?;
+    let product_sales = query_day_close_product_sales(&connection, &window)?;
     let now = current_timestamp_ms();
     let cash_difference = request.counted_cash - totals.expected_cash;
     let report_json = serde_json::json!({
@@ -126,6 +139,7 @@ pub(crate) fn save_day_close(
         "cash_difference": cash_difference,
         "order_count": totals.order_count,
         "item_count": totals.item_count,
+        "product_sales": product_sales,
     })
     .to_string();
 
@@ -251,6 +265,50 @@ fn query_day_close_totals(
         order_count,
         item_count,
     })
+}
+
+fn query_day_close_product_sales(
+    connection: &Connection,
+    window: &DayCloseWindow,
+) -> Result<Vec<DayCloseProductSale>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              COALESCE(order_items.product_id, ''),
+              order_items.product_name,
+              order_items.product_category,
+              COALESCE(SUM(order_items.quantity), 0),
+              COALESCE(SUM(order_items.total_price), 0)
+            FROM order_items
+            INNER JOIN orders ON orders.id = order_items.order_id
+            INNER JOIN payments ON payments.order_id = orders.id
+            WHERE orders.status = 'CLOSED'
+              AND orders.payment_status = 'PAID'
+              AND payments.status = 'COMPLETED'
+              AND payments.created_at >= ?1
+              AND payments.created_at < ?2
+            GROUP BY order_items.product_id, order_items.product_name, order_items.product_category
+            ORDER BY SUM(order_items.total_price) DESC, order_items.product_name
+            ",
+        )
+        .map_err(|error| format!("Could not prepare product sales query: {error}"))?;
+
+    let product_sales = statement
+        .query_map(params![window.start_ms, window.end_ms], |row| {
+            Ok(DayCloseProductSale {
+                product_id: row.get(0)?,
+                product_name: row.get(1)?,
+                product_category: row.get(2)?,
+                quantity: row.get(3)?,
+                total: row.get(4)?,
+            })
+        })
+        .map_err(|error| format!("Could not query product sales: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not read product sales row: {error}"))?;
+
+    Ok(product_sales)
 }
 
 fn query_existing_day_close(

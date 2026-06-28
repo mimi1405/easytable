@@ -39,6 +39,8 @@ fn default_pos_settings() -> PosSettings {
             provider: "none".to_string(),
             device_id: None,
         },
+        // Future: store Wallee terminal configuration here, for example provider = "wallee"
+        // plus the terminal/device id this POS shell should use for card payments.
         payment_terminal: PeripheralSettings {
             enabled: false,
             provider: "none".to_string(),

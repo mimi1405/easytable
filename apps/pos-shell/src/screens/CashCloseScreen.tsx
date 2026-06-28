@@ -215,7 +215,7 @@ export function CashCloseScreen({ onBack }: CashCloseScreenProps) {
           </label>
         </div>
 
-        <div className="grid max-w-6xl grid-cols-1 items-start gap-8 xl:grid-cols-[minmax(22rem,29rem)_minmax(24rem,1fr)]">
+        <div className="grid max-w-7xl grid-cols-1 items-center mx-auto xl:grid-cols-[minmax(22rem,29rem)_minmax(22rem,28rem)_minmax(20rem,1fr)]">
           <TouchNumberPad
             valueInRappen={countedCash}
             onChangeValueInRappen={setCountedCash}
@@ -223,85 +223,133 @@ export function CashCloseScreen({ onBack }: CashCloseScreenProps) {
             disabled={isSaving}
           />
 
-          <section className="rounded-md bg-white p-5 shadow-md shadow-slate-200/70 ring-1 ring-slate-200">
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase text-slate-400">
-                  Systemerwartung
+          <div className="grid gap-5">
+            <section className="rounded-md bg-white p-5 shadow-md shadow-slate-200/70 ring-1 ring-slate-200">
+              <div className="mb-5 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase text-slate-400">
+                    Systemerwartung
+                  </p>
+                  <p className="text-sm font-bold text-slate-500">
+                    {isLoadingPreview
+                      ? "Wird berechnet"
+                      : "Abgeschlossene Zahlungen"}
+                  </p>
+                </div>
+                {preview?.existing_close ? (
+                  <span className="rounded-md bg-amber-50 px-3 py-2 text-xs font-black uppercase text-amber-700">
+                    Bereits gespeichert
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="grid gap-3">
+                <SummaryRow label="Bargeld" value={preview?.expected_cash ?? 0} />
+                <SummaryRow
+                  label="Kartenzahlungen"
+                  value={preview?.expected_card ?? 0}
+                />
+                <SummaryRow
+                  label="Total"
+                  value={preview?.expected_total ?? 0}
+                  strong
+                />
+              </div>
+
+              <div className="mt-5 grid gap-3 border-t border-slate-200 pt-5 text-sm font-bold text-slate-500 sm:grid-cols-2">
+                <p>
+                  Bestellungen{" "}
+                  <span className="font-black text-slate-950">
+                    {preview?.order_count ?? 0}
+                  </span>
                 </p>
-                <p className="text-sm font-bold text-slate-500">
-                  {isLoadingPreview ? "Wird berechnet" : "Abgeschlossene Zahlungen"}
+                <p>
+                  Produkte{" "}
+                  <span className="font-black text-slate-950">
+                    {preview?.item_count ?? 0}
+                  </span>
                 </p>
               </div>
-              {preview?.existing_close ? (
-                <span className="rounded-md bg-amber-50 px-3 py-2 text-xs font-black uppercase text-amber-700">
-                  Bereits gespeichert
-                </span>
-              ) : null}
-            </div>
+            </section>
 
-            <div className="grid gap-3">
-              <SummaryRow label="Bargeld" value={preview?.expected_cash ?? 0} />
-              <SummaryRow
-                label="Kartenzahlungen"
-                value={preview?.expected_card ?? 0}
-              />
-              <SummaryRow
-                label="Total"
-                value={preview?.expected_total ?? 0}
-                strong
-              />
-            </div>
+            <section className="rounded-md bg-white p-5 shadow-md shadow-slate-200/70 ring-1 ring-slate-200">
+              <div className="mb-6 flex items-center justify-between gap-4">
+                <p className="text-xl font-black text-slate-950">Differenz</p>
+                <p
+                  className={cn(
+                    "text-3xl font-black",
+                    cashDifference === 0
+                      ? "text-slate-300"
+                      : cashDifference > 0
+                        ? "text-emerald-700"
+                        : "text-rose-700",
+                  )}
+                >
+                  {formatChf(cashDifference)}
+                </p>
+              </div>
 
-            <div className="my-6 h-px bg-slate-200" />
-
-            <div className="grid gap-3 text-sm font-bold text-slate-500 sm:grid-cols-2">
-              <p>
-                Auftraege{" "}
-                <span className="font-black text-slate-950">
-                  {preview?.order_count ?? 0}
-                </span>
-              </p>
-              <p>
-                Artikel{" "}
-                <span className="font-black text-slate-950">
-                  {preview?.item_count ?? 0}
-                </span>
-              </p>
-            </div>
-
-            <div className="my-6 h-px bg-slate-200" />
-
-            <div className="mb-6 flex items-center justify-between gap-4">
-              <p className="text-xl font-black text-slate-950">Differenz</p>
-              <p
-                className={cn(
-                  "text-3xl font-black",
-                  cashDifference === 0
-                    ? "text-slate-300"
-                    : cashDifference > 0
-                      ? "text-emerald-700"
-                      : "text-rose-700",
-                )}
+              <Button
+                className="h-14 w-full rounded-md bg-slate-950 text-base font-black uppercase text-white shadow-lg shadow-slate-900/10 hover:bg-slate-900"
+                disabled={isSaving || isLoadingPreview || !preview}
+                onClick={() => void handleSaveDayClose()}
               >
-                {formatChf(cashDifference)}
-              </p>
+                <SaveIcon className="mr-2 size-5" />
+                Abschluss speichern
+              </Button>
+
+              {notice ? (
+                <p className="mt-4 rounded-md bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
+                  {notice}
+                </p>
+              ) : null}
+            </section>
+          </div>
+
+          <section className="rounded-md bg-white p-5 shadow-md shadow-slate-200/70 ring-1 ring-slate-200 xl:max-h-[calc(100svh-11rem)] overflow-y-auto">
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase text-slate-400">
+                  Verkaufte Produkte
+                </p>
+                <p className="text-sm font-bold text-slate-500">
+                  Mengen und Umsatz
+                </p>
+              </div>
+              <span className="text-xs font-black uppercase text-slate-400">
+                {preview?.product_sales.length ?? 0} Positionen
+              </span>
             </div>
 
-            <Button
-              className="h-14 w-full rounded-md bg-slate-950 text-base font-black uppercase text-white shadow-lg shadow-slate-900/10 hover:bg-slate-900"
-              disabled={isSaving || isLoadingPreview || !preview}
-              onClick={() => void handleSaveDayClose()}
-            >
-              <SaveIcon className="mr-2 size-5" />
-              Abschluss speichern
-            </Button>
-
-            {notice ? (
-              <p className="mt-4 rounded-md bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
-                {notice}
+            {preview?.product_sales.length ? (
+              <div className="max-h-80 overflow-y-auto rounded-md border border-slate-200 xl:max-h-[calc(100svh-18rem)]">
+                {preview.product_sales.map((sale) => (
+                  <div
+                    key={`${sale.product_id}:${sale.product_name}`}
+                    className="grid grid-cols-[minmax(0,1fr)_4rem_6rem] items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black text-slate-950">
+                        {sale.product_name}
+                      </p>
+                      <p className="truncate text-xs font-bold uppercase text-slate-400">
+                        {sale.product_category}
+                      </p>
+                    </div>
+                    <p className="text-right text-sm font-black text-slate-500">
+                      {sale.quantity}x
+                    </p>
+                    <p className="text-right text-sm font-black text-slate-950">
+                      {formatChf(sale.total)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-md bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">
+                Keine verkauften Produkte im gewaehlten Zeitraum.
               </p>
-            ) : null}
+            )}
           </section>
         </div>
       </section>

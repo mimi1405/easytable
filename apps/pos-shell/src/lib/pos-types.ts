@@ -80,12 +80,20 @@ export type CreatedOrderSnapshot = {
 
 export type MockPaymentMethod = "CASH" | "CARD_MANUAL";
 
+export type MockPaymentRequest = {
+  payment_method: MockPaymentMethod;
+  received_cash?: number;
+  change_given?: number;
+};
+
 export type CompletedMockPayment = {
   order_id: string;
   order_number: string;
   payment_id: string;
   payment_method: MockPaymentMethod | string;
   amount: number;
+  received_cash: number | null;
+  change_given: number | null;
   status: "COMPLETED" | string;
   paid_at: number;
 };
@@ -180,11 +188,20 @@ export type DayClosePreview = {
   expected_total: number;
   order_count: number;
   item_count: number;
+  product_sales: DayCloseProductSale[];
   existing_close: {
     counted_cash: number;
     cash_difference: number;
     created_at: number;
   } | null;
+};
+
+export type DayCloseProductSale = {
+  product_id: string;
+  product_name: string;
+  product_category: string;
+  quantity: number;
+  total: number;
 };
 
 export type SavedDayClose = {

@@ -247,6 +247,8 @@ pub(crate) fn migrate_database(connection: &Connection) -> Result<(), String> {
               id TEXT PRIMARY KEY,
               order_id TEXT NOT NULL,
               amount INTEGER NOT NULL,
+              received_cash INTEGER,
+              change_given INTEGER,
               method TEXT NOT NULL CHECK(method IN ('CASH','CARD_MANUAL','WALLEE')),
               status TEXT NOT NULL CHECK(status IN ('COMPLETED','FAILED','PENDING','CANCELED')),
               provider TEXT,
@@ -358,6 +360,8 @@ pub(crate) fn migrate_database(connection: &Connection) -> Result<(), String> {
         "service_mode",
         "service_mode TEXT NOT NULL DEFAULT 'TABLE'",
     )?;
+    add_column_if_missing(connection, "payments", "received_cash", "received_cash INTEGER")?;
+    add_column_if_missing(connection, "payments", "change_given", "change_given INTEGER")?;
 
     Ok(())
 }
@@ -613,5 +617,33 @@ mod tests {
             .expect("read seeded variant group");
 
         assert_eq!(product_id, None);
+    }
+
+    #[test]
+    fn migrate_adds_cash_audit_columns_to_existing_payments_table() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE payments (
+                  id TEXT PRIMARY KEY,
+                  order_id TEXT NOT NULL,
+                  amount INTEGER NOT NULL,
+                  method TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  provider TEXT,
+                  provider_transaction_id TEXT,
+                  provider_status TEXT,
+                  created_at INTEGER NOT NULL
+                );
+                ",
+            )
+            .expect("create legacy payments table");
+
+        migrate_database(&connection).expect("migrate database");
+
+        assert!(column_exists(&connection, "payments", "received_cash").expect("inspect column"));
+        assert!(column_exists(&connection, "payments", "change_given").expect("inspect column"));
     }
 }
