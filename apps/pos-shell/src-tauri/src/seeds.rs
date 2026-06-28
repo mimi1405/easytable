@@ -188,7 +188,7 @@ const SEED_PRODUCTS: &[SeedProduct] = &[
 const SEED_VARIANT_GROUPS: &[SeedVariantGroup] = &[SeedVariantGroup {
     id: "vgrp_shisha_standard_head",
     applies_to: "CATEGORY",
-    product_id: Some("prod_shisha_standard"),
+    product_id: None,
     category: Some("Shisha"),
     name: "Head",
     selection_type: "SINGLE",

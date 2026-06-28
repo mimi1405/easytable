@@ -326,6 +326,7 @@ pub(crate) fn migrate_database(connection: &Connection) -> Result<(), String> {
         "category",
         "category TEXT",
     )?;
+    relax_variant_group_product_id_constraint(connection)?;
     add_column_if_missing(
         connection,
         "order_items",
@@ -361,6 +362,84 @@ pub(crate) fn migrate_database(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn relax_variant_group_product_id_constraint(connection: &Connection) -> Result<(), String> {
+    if !column_is_not_null(connection, "product_variant_groups", "product_id")? {
+        return Ok(());
+    }
+
+    connection
+        .execute_batch(
+            "
+            PRAGMA foreign_keys = OFF;
+
+            ALTER TABLE product_variant_groups RENAME TO product_variant_groups_legacy;
+            ALTER TABLE product_variant_group_items RENAME TO product_variant_group_items_legacy;
+
+            CREATE TABLE product_variant_groups (
+              id TEXT PRIMARY KEY,
+              applies_to TEXT NOT NULL DEFAULT 'PRODUCT' CHECK(applies_to IN ('PRODUCT','CATEGORY')),
+              product_id TEXT,
+              category TEXT,
+              name TEXT NOT NULL,
+              selection_type TEXT NOT NULL DEFAULT 'SINGLE' CHECK(selection_type IN ('SINGLE','MULTIPLE')),
+              min_select INTEGER NOT NULL DEFAULT 0,
+              max_select INTEGER NOT NULL DEFAULT 1,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              is_required INTEGER NOT NULL DEFAULT 0,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER,
+              CHECK(
+                (applies_to = 'PRODUCT' AND product_id IS NOT NULL)
+                OR (applies_to = 'CATEGORY' AND category IS NOT NULL)
+              ),
+              FOREIGN KEY(product_id) REFERENCES products(id)
+            );
+
+            INSERT INTO product_variant_groups (
+              id, applies_to, product_id, category, name, selection_type, min_select, max_select,
+              sort_order, is_required, is_active, created_at, updated_at
+            )
+            SELECT
+              id, applies_to, product_id, category, name, selection_type, min_select, max_select,
+              sort_order, is_required, is_active, created_at, updated_at
+            FROM product_variant_groups_legacy;
+
+            CREATE TABLE product_variant_group_items (
+              id TEXT PRIMARY KEY,
+              variant_group_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              price_delta INTEGER NOT NULL DEFAULT 0 CHECK(price_delta >= 0),
+              is_default INTEGER NOT NULL DEFAULT 0,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER,
+              FOREIGN KEY(variant_group_id) REFERENCES product_variant_groups(id)
+            );
+
+            INSERT INTO product_variant_group_items (
+              id, variant_group_id, name, price_delta, is_default,
+              sort_order, is_active, created_at, updated_at
+            )
+            SELECT
+              id, variant_group_id, name, price_delta, is_default,
+              sort_order, is_active, created_at, updated_at
+            FROM product_variant_group_items_legacy;
+
+            DROP TABLE product_variant_group_items_legacy;
+            DROP TABLE product_variant_groups_legacy;
+
+            PRAGMA foreign_keys = ON;
+            ",
+        )
+        .map_err(|error| {
+            format!("Could not relax product_variant_groups.product_id constraint: {error}")
+        })?;
+
+    Ok(())
+}
+
 fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<bool, String> {
     let mut statement = connection
         .prepare(&format!("PRAGMA table_info({table})"))
@@ -373,6 +452,22 @@ fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<b
         .map_err(|error| format!("Could not parse {table} columns: {error}"))?;
 
     Ok(columns.iter().any(|existing| existing == column))
+}
+
+fn column_is_not_null(connection: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("Could not inspect {table}: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?)))
+        .map_err(|error| format!("Could not read {table} columns: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not parse {table} columns: {error}"))?;
+
+    Ok(columns
+        .iter()
+        .any(|(existing, not_null)| existing == column && *not_null == 1))
 }
 
 fn add_column_if_missing(
@@ -426,4 +521,97 @@ pub(crate) fn initialize_pos_database(
         seeded_variant_groups,
         seeded_variant_group_items,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::seeds::{seed_products, seed_tax_codes, seed_variant_groups};
+
+    #[test]
+    fn migrate_relaxes_legacy_variant_group_product_id_constraint() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+
+        connection
+            .execute_batch(
+                "
+                PRAGMA foreign_keys = ON;
+
+                CREATE TABLE tax_codes (
+                  id TEXT PRIMARY KEY,
+                  code TEXT NOT NULL UNIQUE,
+                  name TEXT NOT NULL,
+                  rate_bps INTEGER NOT NULL,
+                  is_default INTEGER NOT NULL DEFAULT 0,
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  created_at INTEGER NOT NULL,
+                  updated_at INTEGER
+                );
+
+                CREATE TABLE products (
+                  id TEXT PRIMARY KEY,
+                  product_type TEXT NOT NULL DEFAULT 'BASIC',
+                  name TEXT NOT NULL,
+                  category TEXT NOT NULL DEFAULT 'Alle',
+                  price INTEGER NOT NULL,
+                  tax_code_id TEXT NOT NULL DEFAULT 'tax_standard_ch',
+                  is_available INTEGER NOT NULL DEFAULT 1,
+                  station TEXT NOT NULL DEFAULT 'KITCHEN',
+                  created_at INTEGER NOT NULL,
+                  updated_at INTEGER,
+                  FOREIGN KEY(tax_code_id) REFERENCES tax_codes(id)
+                );
+
+                CREATE TABLE product_variant_groups (
+                  id TEXT PRIMARY KEY,
+                  applies_to TEXT NOT NULL DEFAULT 'PRODUCT',
+                  product_id TEXT NOT NULL,
+                  category TEXT,
+                  name TEXT NOT NULL,
+                  selection_type TEXT NOT NULL DEFAULT 'SINGLE',
+                  min_select INTEGER NOT NULL DEFAULT 0,
+                  max_select INTEGER NOT NULL DEFAULT 1,
+                  sort_order INTEGER NOT NULL DEFAULT 0,
+                  is_required INTEGER NOT NULL DEFAULT 0,
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  created_at INTEGER NOT NULL,
+                  updated_at INTEGER,
+                  FOREIGN KEY(product_id) REFERENCES products(id)
+                );
+
+                CREATE TABLE product_variant_group_items (
+                  id TEXT PRIMARY KEY,
+                  variant_group_id TEXT NOT NULL,
+                  name TEXT NOT NULL,
+                  price_delta INTEGER NOT NULL DEFAULT 0,
+                  is_default INTEGER NOT NULL DEFAULT 0,
+                  sort_order INTEGER NOT NULL DEFAULT 0,
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  created_at INTEGER NOT NULL,
+                  updated_at INTEGER,
+                  FOREIGN KEY(variant_group_id) REFERENCES product_variant_groups(id)
+                );
+                ",
+            )
+            .expect("create legacy schema");
+
+        migrate_database(&connection).expect("migrate legacy database");
+        seed_tax_codes(&connection).expect("seed tax codes");
+        seed_products(&connection).expect("seed products");
+        seed_variant_groups(&connection).expect("seed variant groups");
+
+        let product_id: Option<String> = connection
+            .query_row(
+                "
+                SELECT product_id
+                FROM product_variant_groups
+                WHERE id = 'vgrp_shisha_standard_head'
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read seeded variant group");
+
+        assert_eq!(product_id, None);
+    }
 }

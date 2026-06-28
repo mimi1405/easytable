@@ -4,7 +4,7 @@ import {
   DoorOpenIcon,
   EllipsisIcon,
   LayoutGridIcon,
-  SearchIcon,
+  ListIcon,
   ShoppingBagIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -26,11 +26,7 @@ import type {
   TableContext,
 } from "../lib/pos-types";
 import { BasketPanel } from "./cash-register/BasketPanel";
-import {
-  categories,
-  fallbackProducts,
-  productVisuals,
-} from "./cash-register/catalogData";
+import { fallbackProducts, productVisuals } from "./cash-register/catalogData";
 import { PaymentScreen } from "./cash-register/PaymentScreen";
 import { VariantSelectionDrawer } from "./cash-register/VariantSelectionDrawer";
 import {
@@ -55,6 +51,9 @@ const navItems = [
   active: boolean;
 }[];
 
+const allCategoryLabel = "Alle";
+type CatalogViewMode = "grid" | "list";
+
 export function CashRegisterScreen({
   tableContext,
   onNavigate,
@@ -62,6 +61,9 @@ export function CashRegisterScreen({
 }: CashRegisterScreenProps) {
   const showTopRegion = true;
   const [products, setProducts] = useState<PosProduct[]>(fallbackProducts);
+  const [selectedCategory, setSelectedCategory] = useState(allCategoryLabel);
+  const [catalogViewMode, setCatalogViewMode] =
+    useState<CatalogViewMode>("grid");
   const [basketLines, setBasketLines] = useState<BasketLine[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<ProductCard | null>(
     null,
@@ -149,6 +151,28 @@ export function CashRegisterScreen({
         ...productVisuals[index % productVisuals.length],
       })),
     [products],
+  );
+
+  const productCategories = useMemo(
+    () => [
+      allCategoryLabel,
+      ...Array.from(
+        new Set(
+          products
+            .map((product) => product.category)
+            .filter((category) => category.trim().length > 0),
+        ),
+      ),
+    ],
+    [products],
+  );
+
+  const filteredProductCards = useMemo(
+    () =>
+      selectedCategory === allCategoryLabel
+        ? productCards
+        : productCards.filter((product) => product.category === selectedCategory),
+    [productCards, selectedCategory],
   );
 
   const basketTotal = basketLines.reduce(
@@ -438,15 +462,16 @@ export function CashRegisterScreen({
                 <ArrowLeftIcon className="size-5" />
               </button>
               <nav className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {categories.map((category, index) => (
+                {productCategories.map((category) => (
                   <button
                     key={category}
                     className={[
                       "h-10 shrink-0 rounded-[2rem] px-4 text-sm font-extrabold uppercase tracking-normal transition active:scale-[0.98]",
-                      index === 0
+                      category === selectedCategory
                         ? "bg-slate-950 text-white shadow-lg shadow-slate-900/15"
                         : "bg-slate-100 text-slate-500 active:bg-slate-200",
                     ].join(" ")}
+                    onClick={() => setSelectedCategory(category)}
                   >
                     {category}
                   </button>
@@ -474,57 +499,102 @@ export function CashRegisterScreen({
 
       <section className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_clamp(15rem,24vw,22rem)] overflow-hidden">
         <div className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-12 min-w-0 flex-1 items-center gap-3 rounded-md border border-slate-200 bg-white px-4 shadow-sm">
-              <SearchIcon className="size-5 shrink-0 text-slate-400" />
-              <span className="truncate text-base font-bold text-slate-400">
-                Artikel suchen
-              </span>
+          <div className="mb-4 flex justify-end">
+            <div className="grid h-12 grid-cols-2 rounded-md border border-slate-200 bg-white p-1 shadow-sm">
+              <button
+                className={[
+                  "flex min-w-28 items-center justify-center gap-2 rounded px-3 text-sm font-black uppercase transition active:scale-[0.98]",
+                  catalogViewMode === "grid"
+                    ? "bg-slate-950 text-white shadow-sm"
+                    : "text-slate-500 active:bg-slate-100",
+                ].join(" ")}
+                onClick={() => setCatalogViewMode("grid")}
+              >
+                <LayoutGridIcon className="size-5" />
+                Raster
+              </button>
+              <button
+                className={[
+                  "flex min-w-28 items-center justify-center gap-2 rounded px-3 text-sm font-black uppercase transition active:scale-[0.98]",
+                  catalogViewMode === "list"
+                    ? "bg-slate-950 text-white shadow-sm"
+                    : "text-slate-500 active:bg-slate-100",
+                ].join(" ")}
+                onClick={() => setCatalogViewMode("list")}
+              >
+                <ListIcon className="size-5" />
+                Liste
+              </button>
             </div>
-            <button className="flex h-12 items-center gap-2 rounded-md bg-slate-950 px-4 text-base font-black text-white shadow-lg shadow-slate-900/10 active:scale-[0.98]">
-              <LayoutGridIcon className="size-5" />
-              Raster
-            </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 xl:grid-cols-3 2xl:grid-cols-4">
-            {productCards.map((product, index) => (
-              <button
-                key={product.id}
-                className="group flex aspect-[1.08] min-h-44 flex-col overflow-hidden rounded-md bg-white text-left shadow-md shadow-slate-200/80 ring-1 ring-slate-200 transition active:scale-[0.985]"
-                onClick={() => void handleProductPress(product)}
-              >
-                <div
-                  className={`relative flex flex-1 items-center justify-center bg-gradient-to-br ${product.tone}`}
+          {catalogViewMode === "grid" ? (
+            <div className="grid grid-cols-2 gap-4 xl:grid-cols-3 2xl:grid-cols-4">
+              {filteredProductCards.map((product, index) => (
+                <button
+                  key={product.id}
+                  className="group flex aspect-[1.08] min-h-44 flex-col overflow-hidden rounded-md bg-white text-left shadow-md shadow-slate-200/80 ring-1 ring-slate-200 transition active:scale-[0.985]"
+                  onClick={() => void handleProductPress(product)}
                 >
-                  {index < 2 ? (
-                    <BoxesIcon className="size-16 text-slate-300" />
-                  ) : (
-                    <div
-                      className={`flex size-20 items-center justify-center rounded-md bg-white/50 ${product.accent}`}
-                    >
-                      <BoxesIcon className="size-14" />
+                  <div
+                    className={`relative flex flex-1 items-center justify-center bg-gradient-to-br ${product.tone}`}
+                  >
+                    {index < 2 ? (
+                      <BoxesIcon className="size-16 text-slate-300" />
+                    ) : (
+                      <div
+                        className={`flex size-20 items-center justify-center rounded-md bg-white/50 ${product.accent}`}
+                      >
+                        <BoxesIcon className="size-14" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex min-h-16 items-end justify-between gap-2 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-black text-slate-950">
+                        {product.name}
+                      </p>
+                      <p className="text-sm font-extrabold text-slate-500">
+                        {formatChf(product.price)}
+                      </p>
                     </div>
-                  )}
-                </div>
-                <div className="flex min-h-16 items-end justify-between gap-2 px-3 py-2">
-                  <div className="min-w-0">
+                    {index > 1 ? (
+                      <span className="shrink-0 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-black text-indigo-700">
+                        Varianten
+                      </span>
+                    ) : null}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {filteredProductCards.map((product) => (
+                <button
+                  key={product.id}
+                  className="flex min-h-20 items-center gap-3 rounded-md bg-white px-4 text-left shadow-sm ring-1 ring-slate-200 transition active:scale-[0.99] active:bg-slate-50"
+                  onClick={() => void handleProductPress(product)}
+                >
+                  <div
+                    className={`flex size-14 shrink-0 items-center justify-center rounded-md bg-gradient-to-br ${product.tone}`}
+                  >
+                    <BoxesIcon className={`size-7 ${product.accent}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
                     <p className="truncate text-base font-black text-slate-950">
                       {product.name}
                     </p>
-                    <p className="text-sm font-extrabold text-slate-500">
-                      {formatChf(product.price)}
+                    <p className="truncate text-xs font-black uppercase text-slate-400">
+                      {product.category}
                     </p>
                   </div>
-                  {index > 1 ? (
-                    <span className="shrink-0 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-black text-indigo-700">
-                      Varianten
-                    </span>
-                  ) : null}
-                </div>
-              </button>
-            ))}
-          </div>
+                  <p className="shrink-0 text-lg font-black text-slate-950">
+                    {formatChf(product.price)}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <BasketPanel

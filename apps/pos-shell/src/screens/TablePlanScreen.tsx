@@ -61,7 +61,6 @@ const fallbackLayout: TableLayout = {
 
 const navItems = [
   { label: "Kasse", icon: ReceiptTextIcon, screen: "tables", active: true },
-  { label: "Verkaufe", icon: ReceiptTextIcon, screen: "tables", active: false },
   { label: "Mehr", icon: EllipsisIcon, screen: "more", active: false },
   { label: "Abmelden", icon: DoorOpenIcon, screen: "logout", active: false },
 ] as const satisfies readonly {
@@ -224,7 +223,7 @@ export function TablePlanScreen({
         </div>
       </section>
 
-      <footer className="grid h-16 shrink-0 grid-cols-4 border-t border-slate-200 bg-white">
+      <footer className="grid h-16 shrink-0 grid-cols-3 border-t border-slate-200 bg-white">
         {navItems.map(({ label, icon: Icon, screen, active }) => (
           <Button
             key={label}

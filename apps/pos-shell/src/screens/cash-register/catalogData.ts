@@ -1,17 +1,5 @@
 import type { PosProduct } from "../../lib/pos-types";
 
-export const categories = [
-  "Alle",
-  "Test",
-  "Shisha",
-  "Sussgetranke",
-  "Heisse Getranke",
-  "Bier",
-  "Apero & Wein",
-  "Cocktails",
-  "Snacks",
-] as const;
-
 export const productVisuals = [
   {
     tone: "from-slate-50 to-slate-100",
