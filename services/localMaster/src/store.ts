@@ -1,5 +1,6 @@
 ﻿import { readState, writeState } from "./statePersistence.js";
 import { randomUUID } from "node:crypto";
+import { getProductById, listProducts as listCatalogProducts } from "./catalogStore.js";
 
 import type {
   BasketLine,
@@ -16,7 +17,6 @@ import type {
   Order,
   OrderDraft,
   PosSettingsFile,
-  PosProduct,
   ProductVariantGroup,
   ProductVariantGroupItem,
   Table,
@@ -53,19 +53,6 @@ const layoutTables: Array<Omit<TableLayoutTable, "open_order_id" | "open_order_n
   { id: "table_basilica_lounges_10", area_id: "area_basilica_lounges", name: "10", seats: 6, sort_order: 10 },
   { id: "table_basilica_raucherlounge_20", area_id: "area_basilica_raucherlounge", name: "20", seats: 8, sort_order: 10 },
   { id: "table_basilica_og_30", area_id: "area_basilica_og_lounge", name: "30", seats: 4, sort_order: 10 }
-];
-
-const products: PosProduct[] = [
-  createProduct("prod_invoice", "SERVICE", "Rechnung", "Service", 0, "tax_standard_ch", "MwSt 8.1%", 810, "SERVICE"),
-  createProduct("prod_service_personal", "SERVICE", "Service Personal", "Service", 0, "tax_standard_ch", "MwSt 8.1%", 810, "SERVICE"),
-  createProduct("prod_shisha_standard", "BASIC", "Shisha Standard", "Shisha", 3000, "tax_standard_ch", "MwSt 8.1%", 810, "BAR"),
-  createProduct("prod_nava_shisha", "BASIC", "NAVA Shisha", "Shisha", 5900, "tax_standard_ch", "MwSt 8.1%", 810, "BAR"),
-  createProduct("prod_smokezilla_laser_shisha", "BASIC", "SmokeZilla Laser Shisha", "Shisha", 8900, "tax_standard_ch", "MwSt 8.1%", 810, "BAR"),
-  createProduct("prod_shisha_triple_skull", "BASIC", "Shisha Triple Skull", "Shisha", 4500, "tax_standard_ch", "MwSt 8.1%", 810, "BAR"),
-  createProduct("prod_neuer_kopf", "SERVICE", "Neuer Kopf", "Shisha", 1500, "tax_standard_ch", "MwSt 8.1%", 810, "BAR"),
-  createProduct("prod_kohle", "SERVICE", "Kohle", "Shisha", 0, "tax_standard_ch", "MwSt 8.1%", 810, "BAR"),
-  createProduct("prod_mundstucke", "SERVICE", "Mundstucke", "Shisha", 300, "tax_standard_ch", "MwSt 8.1%", 810, "BAR"),
-  createProduct("prod_chinotto", "BASIC", "Chinotto", "Sussgetranke", 700, "tax_standard_ch", "MwSt 8.1%", 810, "BAR")
 ];
 
 const variantGroups: ProductVariantGroup[] = [
@@ -180,32 +167,6 @@ type PosOrderSnapshot = {
   closed_at: number | null;
 };
 
-function createProduct(
-  id: string,
-  productType: PosProduct["product_type"],
-  name: string,
-  category: string,
-  price: number,
-  taxCodeId: string,
-  taxCodeName: string,
-  taxRateBps: number,
-  station: string
-): PosProduct {
-  return {
-    id,
-    product_type: productType,
-    name,
-    category,
-    price,
-    tax_code_id: taxCodeId,
-    tax_code_name: taxCodeName,
-    tax_rate_bps: taxRateBps,
-    is_available: true,
-    isAvailable: true,
-    station
-  };
-}
-
 function createVariantItem(
   id: string,
   variantGroupId: string,
@@ -225,13 +186,11 @@ function createVariantItem(
 }
 
 export function listProducts() {
-  return [...products].sort((left, right) =>
-    (left.category + ":" + left.name).localeCompare(right.category + ":" + right.name)
-  );
+  return listCatalogProducts();
 }
 
 export function listProductVariantGroups(productId: string) {
-  const product = products.find((entry) => entry.id === productId);
+  const product = getProductById(productId);
 
   if (!product || product.product_type !== "BASIC") {
     return [];
@@ -480,7 +439,7 @@ export function createOrder(draft: OrderDraft): CreateOrderResult {
   }
 
   const items = draft.items.map((item) => {
-    const product = products.find((entry) => entry.id === item.productId);
+    const product = getProductById(item.productId);
 
     if (!product || !product.is_available) {
       throw new Error("Unavailable product: " + item.productId);
@@ -866,6 +825,9 @@ function cloneBasketLines(lines: BasketLine[]) {
     variants: line.variants.map((variant) => ({ ...variant }))
   }));
 }
+
+
+
 
 
 

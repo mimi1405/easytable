@@ -23,7 +23,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   await app.register(cors, {
     origin: true,
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type"]
   });
 
@@ -48,3 +48,4 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   return app;
 }
+

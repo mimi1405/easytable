@@ -1,4 +1,4 @@
-export type PosProduct = {
+﻿export type PosProduct = {
   id: string;
   product_type: "BASIC" | "SERVICE";
   name: string;
@@ -11,6 +11,60 @@ export type PosProduct = {
   isAvailable: boolean;
   station: string;
 };
+
+export type CatalogProduct = PosProduct & {
+  category_id: string;
+  tax_id: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type CatalogCategory = {
+  id: string;
+  name: string;
+  sort_order: number;
+  product_count: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type CatalogTax = {
+  id: string;
+  name: string;
+  rate_bps: number;
+  sort_order: number;
+  product_count: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type CatalogProductCreateRequest = {
+  category_id: string;
+  tax_id: string;
+  product_type: PosProduct["product_type"];
+  name: string;
+  price: number;
+  is_available: boolean;
+  station: string;
+};
+
+export type CatalogProductUpdateRequest = Partial<CatalogProductCreateRequest>;
+
+export type CatalogCategoryCreateRequest = {
+  name: string;
+  sort_order?: number;
+};
+
+export type CatalogCategoryUpdateRequest = Partial<CatalogCategoryCreateRequest>;
+
+export type CatalogTaxCreateRequest = {
+  id?: string;
+  name: string;
+  rate_bps: number;
+  sort_order?: number;
+};
+
+export type CatalogTaxUpdateRequest = Partial<CatalogTaxCreateRequest>;
 
 export type Product = PosProduct;
 
@@ -349,4 +403,9 @@ export type RealtimeEvent = {
   createdAt: number;
   payload: unknown;
 };
+
+
+
+
+
 

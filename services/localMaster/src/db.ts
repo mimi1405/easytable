@@ -37,9 +37,37 @@ function ensureSchema(db: DatabaseSync) {
     "CREATE INDEX IF NOT EXISTS idx_payments_day_close ON payments(status, method, created_at)",
     "CREATE TABLE IF NOT EXISTS day_closes (id TEXT PRIMARY KEY, date TEXT NOT NULL UNIQUE, total_cash INTEGER NOT NULL, total_card INTEGER NOT NULL, order_count INTEGER NOT NULL, item_count INTEGER NOT NULL, report_json TEXT NOT NULL, created_at INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS local_state (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS catalog_categories (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, sort_order INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS catalog_taxes (id TEXT PRIMARY KEY, name TEXT NOT NULL, rate_bps INTEGER NOT NULL, sort_order INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS catalog_products (id TEXT PRIMARY KEY, category_id TEXT NOT NULL REFERENCES catalog_categories(id) ON DELETE RESTRICT, tax_id TEXT, product_type TEXT NOT NULL, name TEXT NOT NULL, price INTEGER NOT NULL, tax_code_id TEXT NOT NULL, tax_code_name TEXT NOT NULL, tax_rate_bps INTEGER NOT NULL, is_available INTEGER NOT NULL, station TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+  ].join(";"));
+
+  migrateCatalogSchema(db);
+
+  db.exec([
+    "CREATE INDEX IF NOT EXISTS idx_catalog_products_category ON catalog_products(category_id, name)",
+    "CREATE INDEX IF NOT EXISTS idx_catalog_products_station ON catalog_products(station, product_type)",
+    "CREATE INDEX IF NOT EXISTS idx_catalog_products_tax ON catalog_products(tax_id, name)",
+    "CREATE INDEX IF NOT EXISTS idx_catalog_taxes_rate ON catalog_taxes(rate_bps, name)",
     "CREATE TABLE IF NOT EXISTS pairing_sessions (code TEXT PRIMARY KEY, instance_id TEXT NOT NULL, display_url TEXT, expires_at INTEGER NOT NULL, used_at INTEGER, created_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_pairing_sessions_expires ON pairing_sessions(expires_at, used_at)",
     "CREATE TABLE IF NOT EXISTS paired_terminals (id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL, secret TEXT NOT NULL, device_fingerprint TEXT, paired_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_paired_terminals_seen ON paired_terminals(last_seen_at)"
   ].join(";"));
 }
+type TableInfoRow = {
+  name: string;
+};
+
+function migrateCatalogSchema(db: DatabaseSync) {
+  if (!columnExists(db, "catalog_products", "tax_id")) {
+    db.exec("ALTER TABLE catalog_products ADD COLUMN tax_id TEXT");
+  }
+}
+
+function columnExists(db: DatabaseSync, tableName: string, columnName: string) {
+  const rows = db.prepare("PRAGMA table_info(" + tableName + ")").all() as TableInfoRow[];
+  return rows.some((row) => row.name === columnName);
+}
+
+
