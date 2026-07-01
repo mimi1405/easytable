@@ -1,27 +1,38 @@
-﻿import { getDatabase } from "./db.js";
+import { eq } from "drizzle-orm";
 
-type StateRow = {
-  value_json: string;
-};
+import { getDrizzleDatabase } from "./db/client.js";
+import { localState } from "./db/schema.js";
 
 export function readState<T>(key: string, fallback: T): T {
-  const row = getDatabase()
-    .prepare("SELECT value_json FROM local_state WHERE key = ?")
-    .get(key) as StateRow | undefined;
+  const row = getDrizzleDatabase()
+    .select({ valueJson: localState.valueJson })
+    .from(localState)
+    .where(eq(localState.key, key))
+    .get();
 
   if (!row) {
     return fallback;
   }
 
   try {
-    return JSON.parse(row.value_json) as T;
+    return JSON.parse(row.valueJson) as T;
   } catch {
     return fallback;
   }
 }
 
 export function writeState(key: string, value: unknown) {
-  getDatabase()
-    .prepare("INSERT INTO local_state (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at")
-    .run(key, JSON.stringify(value), Date.now());
+  const valueJson = JSON.stringify(value);
+
+  getDrizzleDatabase()
+    .insert(localState)
+    .values({ key, valueJson, updatedAt: Date.now() })
+    .onConflictDoUpdate({
+      target: localState.key,
+      set: {
+        valueJson,
+        updatedAt: Date.now()
+      }
+    })
+    .run();
 }

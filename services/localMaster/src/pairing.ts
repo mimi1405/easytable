@@ -1,6 +1,9 @@
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 
-import { getDatabase } from "./db.js";
+import { and, eq, isNull } from "drizzle-orm";
+
+import { getDrizzleDatabase } from "./db/client.js";
+import { localState, pairedTerminals, pairingSessions } from "./db/schema.js";
 import { loadPosSettings } from "./store.js";
 import type {
   LocalMasterIdentity,
@@ -29,7 +32,6 @@ export function getLocalMasterIdentity(): LocalMasterIdentity {
 }
 
 export function createPairingSession(request: PairingSessionRequest = {}): PairingSession {
-  const db = getDatabase();
   const now = Date.now();
   const session: PairingSession = {
     code: createPairingCode(),
@@ -39,9 +41,17 @@ export function createPairingSession(request: PairingSessionRequest = {}): Pairi
     location_id: loadPosSettings().settings.location_id
   };
 
-  db.prepare(
-    "INSERT INTO pairing_sessions (code, instance_id, display_url, expires_at, used_at, created_at) VALUES (?, ?, ?, ?, NULL, ?)"
-  ).run(session.code, session.instance_id, session.local_master_url, session.expires_at, now);
+  getDrizzleDatabase()
+    .insert(pairingSessions)
+    .values({
+      code: session.code,
+      instanceId: session.instance_id,
+      displayUrl: session.local_master_url,
+      expiresAt: session.expires_at,
+      usedAt: null,
+      createdAt: now
+    })
+    .run();
 
   return session;
 }
@@ -55,13 +65,11 @@ export function pairTerminal(request: PairTerminalRequest): TerminalPairingConfi
     throw new Error("Terminal name is required.");
   }
 
-  const db = getDatabase();
+  const db = getDrizzleDatabase();
   const now = Date.now();
-  const session = db.prepare(
-    "SELECT code, instance_id, display_url, expires_at, used_at FROM pairing_sessions WHERE code = ?"
-  ).get(code) as PairingSessionRow | undefined;
+  const session = db.select().from(pairingSessions).where(eq(pairingSessions.code, code)).get();
 
-  if (!session || session.used_at !== null || session.expires_at < now) {
+  if (!session || session.usedAt !== null || session.expiresAt < now) {
     throw new Error("Pairing code is invalid or expired.");
   }
 
@@ -69,23 +77,23 @@ export function pairTerminal(request: PairTerminalRequest): TerminalPairingConfi
   const terminalSecret = randomBytes(24).toString("hex");
   const role = request.role ?? "POS_TERMINAL";
 
-  db.prepare(
-    "INSERT INTO paired_terminals (id, instance_id, name, role, secret, device_fingerprint, paired_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(
-    terminalId,
-    session.instance_id,
-    terminalName,
-    role,
-    terminalSecret,
-    request.device_fingerprint ?? null,
-    now,
-    now
-  );
-  db.prepare("UPDATE pairing_sessions SET used_at = ? WHERE code = ?").run(now, code);
+  db.insert(pairedTerminals)
+    .values({
+      id: terminalId,
+      instanceId: session.instanceId,
+      name: terminalName,
+      role,
+      secret: terminalSecret,
+      deviceFingerprint: request.device_fingerprint ?? null,
+      pairedAt: now,
+      lastSeenAt: now
+    })
+    .run();
+  db.update(pairingSessions).set({ usedAt: now }).where(eq(pairingSessions.code, code)).run();
 
   return {
     localMasterUrl,
-    localMasterInstanceId: session.instance_id,
+    localMasterInstanceId: session.instanceId,
     terminalId,
     terminalName,
     terminalRole: role,
@@ -99,55 +107,57 @@ export function recordTerminalHeartbeat(
   terminalId: string,
   request: TerminalHeartbeatRequest
 ): TerminalRecord {
-  const db = getDatabase();
-  const terminal = db.prepare(
-    "SELECT id, instance_id, name, role, secret, device_fingerprint, paired_at, last_seen_at FROM paired_terminals WHERE id = ?"
-  ).get(terminalId) as TerminalRow | undefined;
+  const db = getDrizzleDatabase();
+  const terminal = db.select().from(pairedTerminals).where(eq(pairedTerminals.id, terminalId)).get();
 
   if (!terminal || terminal.secret !== request.terminal_secret) {
     throw new Error("Unknown terminal or invalid terminal secret.");
   }
 
   const now = Date.now();
-  db.prepare("UPDATE paired_terminals SET last_seen_at = ? WHERE id = ?").run(now, terminalId);
+  db.update(pairedTerminals).set({ lastSeenAt: now }).where(eq(pairedTerminals.id, terminalId)).run();
 
   return {
     id: terminal.id,
-    instance_id: terminal.instance_id,
+    instance_id: terminal.instanceId,
     name: terminal.name,
     role: terminal.role,
-    device_fingerprint: terminal.device_fingerprint,
-    paired_at: terminal.paired_at,
+    device_fingerprint: terminal.deviceFingerprint,
+    paired_at: terminal.pairedAt,
     last_seen_at: now
   };
 }
 
 function getOrCreateInstanceId() {
-  const db = getDatabase();
-  const row = db.prepare("SELECT value_json FROM local_state WHERE key = ?").get(instanceStateKey) as
-    | { value_json: string }
-    | undefined;
+  const db = getDrizzleDatabase();
+  const row = db
+    .select({ valueJson: localState.valueJson })
+    .from(localState)
+    .where(eq(localState.key, instanceStateKey))
+    .get();
 
   if (row) {
-    return JSON.parse(row.value_json) as string;
+    return JSON.parse(row.valueJson) as string;
   }
 
   const instanceId = "lm_" + randomUUID();
-  db.prepare("INSERT INTO local_state (key, value_json, updated_at) VALUES (?, ?, ?)").run(
-    instanceStateKey,
-    JSON.stringify(instanceId),
-    Date.now()
-  );
+  db.insert(localState)
+    .values({ key: instanceStateKey, valueJson: JSON.stringify(instanceId), updatedAt: Date.now() })
+    .run();
 
   return instanceId;
 }
 
 function createPairingCode() {
-  const db = getDatabase();
+  const db = getDrizzleDatabase();
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    const existing = db.prepare("SELECT code FROM pairing_sessions WHERE code = ? AND used_at IS NULL").get(code);
+    const existing = db
+      .select({ code: pairingSessions.code })
+      .from(pairingSessions)
+      .where(and(eq(pairingSessions.code, code), isNull(pairingSessions.usedAt)))
+      .get();
 
     if (!existing) {
       return code;
@@ -182,22 +192,3 @@ function normalizeUrl(url: string) {
 
   return parsed.toString().replace(/\/$/, "");
 }
-
-type PairingSessionRow = {
-  code: string;
-  instance_id: string;
-  display_url: string | null;
-  expires_at: number;
-  used_at: number | null;
-};
-
-type TerminalRow = {
-  id: string;
-  instance_id: string;
-  name: string;
-  role: string;
-  secret: string;
-  device_fingerprint: string | null;
-  paired_at: number;
-  last_seen_at: number;
-};

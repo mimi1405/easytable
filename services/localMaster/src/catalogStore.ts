@@ -1,6 +1,9 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
-import { getDatabase } from "./db.js";
+import { and, asc, count, eq, ne, sql } from "drizzle-orm";
+
+import { getDrizzleDatabase } from "./db/client.js";
+import { catalogCategories, catalogProducts, catalogTaxes } from "./db/schema.js";
 import type {
   CatalogCategory,
   CatalogCategoryCreateRequest,
@@ -29,42 +32,38 @@ const defaultProducts: PosProduct[] = [
 
 type CatalogProductRow = {
   id: string;
-  product_type: "BASIC" | "SERVICE";
+  productType: string;
   name: string;
-  category_id: string;
+  categoryId: string;
   category: string;
-  tax_id: string | null;
+  taxId: string | null;
   price: number;
-  tax_code_id: string;
-  tax_code_name: string;
-  tax_rate_bps: number;
-  is_available: number;
+  taxCodeId: string;
+  taxCodeName: string;
+  taxRateBps: number;
+  isAvailable: number;
   station: string;
-  created_at: number;
-  updated_at: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 type CatalogCategoryRow = {
   id: string;
   name: string;
-  sort_order: number;
-  product_count: number;
-  created_at: number;
-  updated_at: number;
+  sortOrder: number;
+  productCount: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 type CatalogTaxRow = {
   id: string;
   name: string;
-  rate_bps: number;
-  sort_order: number;
-  product_count: number;
-  created_at: number;
-  updated_at: number;
-};
-
-type CountRow = {
-  count: number;
+  rateBps: number;
+  sortOrder: number;
+  productCount: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export class CatalogError extends Error {
@@ -79,31 +78,24 @@ export class CatalogError extends Error {
 export function listProducts(): CatalogProduct[] {
   ensureCatalogSeeded();
 
-  const rows = getDatabase()
-    .prepare([
-      "SELECT p.id, p.product_type, p.name, p.category_id, c.name AS category, p.tax_id, p.price,",
-      "p.tax_code_id, p.tax_code_name, p.tax_rate_bps, p.is_available, p.station, p.created_at, p.updated_at",
-      "FROM catalog_products p",
-      "JOIN catalog_categories c ON c.id = p.category_id",
-      "ORDER BY c.sort_order, c.name, p.name"
-    ].join(" "))
-    .all() as CatalogProductRow[];
-
-  return rows.map(toCatalogProduct);
+  return getDrizzleDatabase()
+    .select(productSelectFields)
+    .from(catalogProducts)
+    .innerJoin(catalogCategories, eq(catalogCategories.id, catalogProducts.categoryId))
+    .orderBy(asc(catalogCategories.sortOrder), asc(catalogCategories.name), asc(catalogProducts.name))
+    .all()
+    .map(toCatalogProduct);
 }
 
 export function getProductById(productId: string): CatalogProduct | null {
   ensureCatalogSeeded();
 
-  const row = getDatabase()
-    .prepare([
-      "SELECT p.id, p.product_type, p.name, p.category_id, c.name AS category, p.tax_id, p.price,",
-      "p.tax_code_id, p.tax_code_name, p.tax_rate_bps, p.is_available, p.station, p.created_at, p.updated_at",
-      "FROM catalog_products p",
-      "JOIN catalog_categories c ON c.id = p.category_id",
-      "WHERE p.id = ?"
-    ].join(" "))
-    .get(productId) as CatalogProductRow | undefined;
+  const row = getDrizzleDatabase()
+    .select(productSelectFields)
+    .from(catalogProducts)
+    .innerJoin(catalogCategories, eq(catalogCategories.id, catalogProducts.categoryId))
+    .where(eq(catalogProducts.id, productId))
+    .get();
 
   return row ? toCatalogProduct(row) : null;
 }
@@ -111,33 +103,27 @@ export function getProductById(productId: string): CatalogProduct | null {
 export function listCatalogCategories(): CatalogCategory[] {
   ensureCatalogSeeded();
 
-  const rows = getDatabase()
-    .prepare([
-      "SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at, COUNT(p.id) AS product_count",
-      "FROM catalog_categories c",
-      "LEFT JOIN catalog_products p ON p.category_id = c.id",
-      "GROUP BY c.id",
-      "ORDER BY c.sort_order, c.name"
-    ].join(" "))
-    .all() as CatalogCategoryRow[];
-
-  return rows.map(toCatalogCategory);
+  return getDrizzleDatabase()
+    .select(categorySelectFields)
+    .from(catalogCategories)
+    .leftJoin(catalogProducts, eq(catalogProducts.categoryId, catalogCategories.id))
+    .groupBy(catalogCategories.id)
+    .orderBy(asc(catalogCategories.sortOrder), asc(catalogCategories.name))
+    .all()
+    .map(toCatalogCategory);
 }
 
 export function listCatalogTaxes(): CatalogTax[] {
   ensureCatalogSeeded();
 
-  const rows = getDatabase()
-    .prepare([
-      "SELECT t.id, t.name, t.rate_bps, t.sort_order, t.created_at, t.updated_at, COUNT(p.id) AS product_count",
-      "FROM catalog_taxes t",
-      "LEFT JOIN catalog_products p ON p.tax_id = t.id",
-      "GROUP BY t.id",
-      "ORDER BY t.sort_order, t.name"
-    ].join(" "))
-    .all() as CatalogTaxRow[];
-
-  return rows.map(toCatalogTax);
+  return getDrizzleDatabase()
+    .select(taxSelectFields)
+    .from(catalogTaxes)
+    .leftJoin(catalogProducts, eq(catalogProducts.taxId, catalogTaxes.id))
+    .groupBy(catalogTaxes.id)
+    .orderBy(asc(catalogTaxes.sortOrder), asc(catalogTaxes.name))
+    .all()
+    .map(toCatalogTax);
 }
 
 export function createCatalogProduct(request: CatalogProductCreateRequest): CatalogProduct {
@@ -148,13 +134,24 @@ export function createCatalogProduct(request: CatalogProductCreateRequest): Cata
   const tax = requireTax(input.tax_id);
   const id = "prod_" + randomUUID();
 
-  getDatabase()
-    .prepare([
-      "INSERT INTO catalog_products (id, category_id, tax_id, product_type, name, price, tax_code_id, tax_code_name,",
-      "tax_rate_bps, is_available, station, created_at, updated_at)",
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ].join(" "))
-    .run(id, input.category_id, tax.id, input.product_type, input.name, input.price, tax.id, tax.name, tax.rate_bps, input.is_available ? 1 : 0, input.station, now, now);
+  getDrizzleDatabase()
+    .insert(catalogProducts)
+    .values({
+      id,
+      categoryId: input.category_id,
+      taxId: tax.id,
+      productType: input.product_type,
+      name: input.name,
+      price: input.price,
+      taxCodeId: tax.id,
+      taxCodeName: tax.name,
+      taxRateBps: tax.rate_bps,
+      isAvailable: input.is_available ? 1 : 0,
+      station: input.station,
+      createdAt: now,
+      updatedAt: now
+    })
+    .run();
 
   return requireProduct(id);
 }
@@ -174,12 +171,23 @@ export function updateCatalogProduct(productId: string, request: CatalogProductU
   });
   const tax = requireTax(input.tax_id);
 
-  getDatabase()
-    .prepare([
-      "UPDATE catalog_products SET category_id = ?, tax_id = ?, product_type = ?, name = ?, price = ?, tax_code_id = ?,",
-      "tax_code_name = ?, tax_rate_bps = ?, is_available = ?, station = ?, updated_at = ? WHERE id = ?"
-    ].join(" "))
-    .run(input.category_id, tax.id, input.product_type, input.name, input.price, tax.id, tax.name, tax.rate_bps, input.is_available ? 1 : 0, input.station, Date.now(), productId);
+  getDrizzleDatabase()
+    .update(catalogProducts)
+    .set({
+      categoryId: input.category_id,
+      taxId: tax.id,
+      productType: input.product_type,
+      name: input.name,
+      price: input.price,
+      taxCodeId: tax.id,
+      taxCodeName: tax.name,
+      taxRateBps: tax.rate_bps,
+      isAvailable: input.is_available ? 1 : 0,
+      station: input.station,
+      updatedAt: Date.now()
+    })
+    .where(eq(catalogProducts.id, productId))
+    .run();
 
   return requireProduct(productId);
 }
@@ -202,7 +210,7 @@ export function deleteCatalogProduct(productId: string) {
   ensureCatalogSeeded();
   requireProduct(productId);
 
-  getDatabase().prepare("DELETE FROM catalog_products WHERE id = ?").run(productId);
+  getDrizzleDatabase().delete(catalogProducts).where(eq(catalogProducts.id, productId)).run();
 }
 
 export function createCatalogCategory(request: CatalogCategoryCreateRequest): CatalogCategory {
@@ -214,9 +222,10 @@ export function createCatalogCategory(request: CatalogCategoryCreateRequest): Ca
   const sortOrder = normalizeOptionalInteger(request.sort_order, nextCategorySortOrder());
   const id = "cat_" + randomUUID();
 
-  getDatabase()
-    .prepare("INSERT INTO catalog_categories (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, name, sortOrder, now, now);
+  getDrizzleDatabase()
+    .insert(catalogCategories)
+    .values({ id, name, sortOrder, createdAt: now, updatedAt: now })
+    .run();
 
   return requireCategory(id);
 }
@@ -231,9 +240,11 @@ export function updateCatalogCategory(categoryId: string, request: CatalogCatego
     ensureUniqueCategoryName(name, categoryId);
   }
 
-  getDatabase()
-    .prepare("UPDATE catalog_categories SET name = ?, sort_order = ?, updated_at = ? WHERE id = ?")
-    .run(name, sortOrder, Date.now(), categoryId);
+  getDrizzleDatabase()
+    .update(catalogCategories)
+    .set({ name, sortOrder, updatedAt: Date.now() })
+    .where(eq(catalogCategories.id, categoryId))
+    .run();
 
   return requireCategory(categoryId);
 }
@@ -248,13 +259,17 @@ export function deleteCatalogCategory(categoryId: string) {
   ensureCatalogSeeded();
   requireCategory(categoryId);
 
-  const row = getDatabase().prepare("SELECT COUNT(*) AS count FROM catalog_products WHERE category_id = ?").get(categoryId) as CountRow;
+  const row = getDrizzleDatabase()
+    .select({ count: count() })
+    .from(catalogProducts)
+    .where(eq(catalogProducts.categoryId, categoryId))
+    .get();
 
-  if (row.count > 0) {
+  if ((row?.count ?? 0) > 0) {
     throw new CatalogError("Category still has products assigned.", 409);
   }
 
-  getDatabase().prepare("DELETE FROM catalog_categories WHERE id = ?").run(categoryId);
+  getDrizzleDatabase().delete(catalogCategories).where(eq(catalogCategories.id, categoryId)).run();
 }
 
 export function createCatalogTax(request: CatalogTaxCreateRequest): CatalogTax {
@@ -267,9 +282,10 @@ export function createCatalogTax(request: CatalogTaxCreateRequest): CatalogTax {
   const sortOrder = normalizeOptionalInteger(request.sort_order, nextTaxSortOrder());
   ensureUniqueTaxId(id);
 
-  getDatabase()
-    .prepare("INSERT INTO catalog_taxes (id, name, rate_bps, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(id, name, rateBps, sortOrder, now, now);
+  getDrizzleDatabase()
+    .insert(catalogTaxes)
+    .values({ id, name, rateBps, sortOrder, createdAt: now, updatedAt: now })
+    .run();
 
   return requireTax(id);
 }
@@ -281,9 +297,16 @@ export function updateCatalogTax(taxId: string, request: CatalogTaxUpdateRequest
   const rateBps = request.rate_bps === undefined ? current.rate_bps : normalizeInteger(request.rate_bps, "Tax rate must be a positive integer or zero.");
   const sortOrder = request.sort_order === undefined ? current.sort_order : normalizeOptionalInteger(request.sort_order, current.sort_order);
   const now = Date.now();
+  const db = getDrizzleDatabase();
 
-  getDatabase().prepare("UPDATE catalog_taxes SET name = ?, rate_bps = ?, sort_order = ?, updated_at = ? WHERE id = ?").run(name, rateBps, sortOrder, now, taxId);
-  getDatabase().prepare("UPDATE catalog_products SET tax_code_name = ?, tax_rate_bps = ?, updated_at = ? WHERE tax_id = ?").run(name, rateBps, now, taxId);
+  db.update(catalogTaxes)
+    .set({ name, rateBps, sortOrder, updatedAt: now })
+    .where(eq(catalogTaxes.id, taxId))
+    .run();
+  db.update(catalogProducts)
+    .set({ taxCodeName: name, taxRateBps: rateBps, updatedAt: now })
+    .where(eq(catalogProducts.taxId, taxId))
+    .run();
 
   return requireTax(taxId);
 }
@@ -298,58 +321,113 @@ export function deleteCatalogTax(taxId: string) {
   ensureCatalogSeeded();
   requireTax(taxId);
 
-  const row = getDatabase().prepare("SELECT COUNT(*) AS count FROM catalog_products WHERE tax_id = ?").get(taxId) as CountRow;
+  const row = getDrizzleDatabase()
+    .select({ count: count() })
+    .from(catalogProducts)
+    .where(eq(catalogProducts.taxId, taxId))
+    .get();
 
-  if (row.count > 0) {
+  if ((row?.count ?? 0) > 0) {
     throw new CatalogError("Tax is still assigned to products.", 409);
   }
 
-  getDatabase().prepare("DELETE FROM catalog_taxes WHERE id = ?").run(taxId);
+  getDrizzleDatabase().delete(catalogTaxes).where(eq(catalogTaxes.id, taxId)).run();
 }
 
-function ensureCatalogSeeded() {
-  const db = getDatabase();
-  const row = db.prepare("SELECT COUNT(*) AS count FROM catalog_categories").get() as CountRow;
+const productSelectFields = {
+  id: catalogProducts.id,
+  productType: catalogProducts.productType,
+  name: catalogProducts.name,
+  categoryId: catalogProducts.categoryId,
+  category: catalogCategories.name,
+  taxId: catalogProducts.taxId,
+  price: catalogProducts.price,
+  taxCodeId: catalogProducts.taxCodeId,
+  taxCodeName: catalogProducts.taxCodeName,
+  taxRateBps: catalogProducts.taxRateBps,
+  isAvailable: catalogProducts.isAvailable,
+  station: catalogProducts.station,
+  createdAt: catalogProducts.createdAt,
+  updatedAt: catalogProducts.updatedAt
+};
 
-  if (row.count === 0) {
-    seedCategoriesAndProducts(db);
+const categorySelectFields = {
+  id: catalogCategories.id,
+  name: catalogCategories.name,
+  sortOrder: catalogCategories.sortOrder,
+  createdAt: catalogCategories.createdAt,
+  updatedAt: catalogCategories.updatedAt,
+  productCount: count(catalogProducts.id)
+};
+
+const taxSelectFields = {
+  id: catalogTaxes.id,
+  name: catalogTaxes.name,
+  rateBps: catalogTaxes.rateBps,
+  sortOrder: catalogTaxes.sortOrder,
+  createdAt: catalogTaxes.createdAt,
+  updatedAt: catalogTaxes.updatedAt,
+  productCount: count(catalogProducts.id)
+};
+
+function ensureCatalogSeeded() {
+  const row = getDrizzleDatabase().select({ count: count() }).from(catalogCategories).get();
+
+  if ((row?.count ?? 0) === 0) {
+    seedCategoriesAndProducts();
   }
 
   ensureTaxesSeeded();
   backfillProductTaxIds();
 }
 
-function seedCategoriesAndProducts(db = getDatabase()) {
+function seedCategoriesAndProducts() {
+  const db = getDrizzleDatabase();
   const now = Date.now();
   const categories = Array.from(new Set(defaultProducts.map((product) => product.category)));
   const categoryIdsByName = new Map<string, string>();
 
-  db.exec("BEGIN");
-  try {
+  db.transaction((tx) => {
     categories.forEach((name, index) => {
       const id = "cat_" + slugify(name);
       categoryIdsByName.set(name, id);
-      db.prepare("INSERT INTO catalog_categories (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(id, name, (index + 1) * 10, now, now);
+      tx.insert(catalogCategories)
+        .values({ id, name, sortOrder: (index + 1) * 10, createdAt: now, updatedAt: now })
+        .run();
     });
 
     for (const product of defaultProducts) {
-      db.prepare([
-        "INSERT INTO catalog_products (id, category_id, tax_id, product_type, name, price, tax_code_id, tax_code_name,",
-        "tax_rate_bps, is_available, station, created_at, updated_at)",
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ].join(" ")).run(product.id, categoryIdsByName.get(product.category) ?? "", product.tax_code_id, product.product_type, product.name, product.price, product.tax_code_id, product.tax_code_name, product.tax_rate_bps, product.is_available ? 1 : 0, product.station, now, now);
+      tx.insert(catalogProducts)
+        .values({
+          id: product.id,
+          categoryId: categoryIdsByName.get(product.category) ?? "",
+          taxId: product.tax_code_id,
+          productType: product.product_type,
+          name: product.name,
+          price: product.price,
+          taxCodeId: product.tax_code_id,
+          taxCodeName: product.tax_code_name,
+          taxRateBps: product.tax_rate_bps,
+          isAvailable: product.is_available ? 1 : 0,
+          station: product.station,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run();
     }
-
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 function ensureTaxesSeeded() {
-  const db = getDatabase();
-  const rows = db.prepare("SELECT DISTINCT tax_code_id, tax_code_name, tax_rate_bps FROM catalog_products").all() as Array<{ tax_code_id: string; tax_code_name: string; tax_rate_bps: number }>;
+  const db = getDrizzleDatabase();
+  const rows = db
+    .selectDistinct({
+      taxCodeId: catalogProducts.taxCodeId,
+      taxCodeName: catalogProducts.taxCodeName,
+      taxRateBps: catalogProducts.taxRateBps
+    })
+    .from(catalogProducts)
+    .all();
   const taxesById = new Map<string, { id: string; name: string; rate_bps: number }>();
 
   for (const product of defaultProducts) {
@@ -357,22 +435,32 @@ function ensureTaxesSeeded() {
   }
 
   for (const row of rows) {
-    taxesById.set(row.tax_code_id, { id: row.tax_code_id, name: row.tax_code_name, rate_bps: row.tax_rate_bps });
+    taxesById.set(row.taxCodeId, { id: row.taxCodeId, name: row.taxCodeName, rate_bps: row.taxRateBps });
   }
 
   let index = 0;
   for (const tax of taxesById.values()) {
-    db.prepare([
-      "INSERT INTO catalog_taxes (id, name, rate_bps, sort_order, created_at, updated_at)",
-      "VALUES (?, ?, ?, ?, ?, ?)",
-      "ON CONFLICT(id) DO NOTHING"
-    ].join(" ")).run(tax.id, tax.name, tax.rate_bps, (index + 1) * 10, Date.now(), Date.now());
+    db.insert(catalogTaxes)
+      .values({
+        id: tax.id,
+        name: tax.name,
+        rateBps: tax.rate_bps,
+        sortOrder: (index + 1) * 10,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      })
+      .onConflictDoNothing()
+      .run();
     index += 1;
   }
 }
 
 function backfillProductTaxIds() {
-  getDatabase().prepare("UPDATE catalog_products SET tax_id = tax_code_id WHERE tax_id IS NULL OR tax_id = ''").run();
+  getDrizzleDatabase()
+    .update(catalogProducts)
+    .set({ taxId: sql`${catalogProducts.taxCodeId}` })
+    .where(sql`${catalogProducts.taxId} IS NULL OR ${catalogProducts.taxId} = ''`)
+    .run();
 }
 
 function createSeedProduct(id: string, productType: PosProduct["product_type"], name: string, category: string, price: number, taxCodeId: string, taxCodeName: string, taxRateBps: number, station: string): PosProduct {
@@ -411,22 +499,46 @@ function requireTax(taxId: string): CatalogTax {
 }
 
 function getCategoryById(categoryId: string): CatalogCategory | null {
-  const row = getDatabase().prepare(["SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at, COUNT(p.id) AS product_count", "FROM catalog_categories c", "LEFT JOIN catalog_products p ON p.category_id = c.id", "WHERE c.id = ?", "GROUP BY c.id"].join(" ")).get(categoryId) as CatalogCategoryRow | undefined;
+  const row = getDrizzleDatabase()
+    .select(categorySelectFields)
+    .from(catalogCategories)
+    .leftJoin(catalogProducts, eq(catalogProducts.categoryId, catalogCategories.id))
+    .where(eq(catalogCategories.id, categoryId))
+    .groupBy(catalogCategories.id)
+    .get();
+
   return row ? toCatalogCategory(row) : null;
 }
 
 function getTaxById(taxId: string): CatalogTax | null {
-  const row = getDatabase().prepare(["SELECT t.id, t.name, t.rate_bps, t.sort_order, t.created_at, t.updated_at, COUNT(p.id) AS product_count", "FROM catalog_taxes t", "LEFT JOIN catalog_products p ON p.tax_id = t.id", "WHERE t.id = ?", "GROUP BY t.id"].join(" ")).get(taxId) as CatalogTaxRow | undefined;
+  const row = getDrizzleDatabase()
+    .select(taxSelectFields)
+    .from(catalogTaxes)
+    .leftJoin(catalogProducts, eq(catalogProducts.taxId, catalogTaxes.id))
+    .where(eq(catalogTaxes.id, taxId))
+    .groupBy(catalogTaxes.id)
+    .get();
+
   return row ? toCatalogTax(row) : null;
 }
 
 function ensureUniqueCategoryName(name: string, exceptCategoryId?: string) {
-  const row = getDatabase().prepare("SELECT id FROM catalog_categories WHERE lower(name) = lower(?) AND id != ?").get(name, exceptCategoryId ?? "") as { id: string } | undefined;
+  const row = getDrizzleDatabase()
+    .select({ id: catalogCategories.id })
+    .from(catalogCategories)
+    .where(and(sql`lower(${catalogCategories.name}) = lower(${name})`, ne(catalogCategories.id, exceptCategoryId ?? "")))
+    .get();
+
   if (row) throw new CatalogError("Category name already exists.", 409);
 }
 
 function ensureUniqueTaxId(taxId: string) {
-  const row = getDatabase().prepare("SELECT id FROM catalog_taxes WHERE id = ?").get(taxId) as { id: string } | undefined;
+  const row = getDrizzleDatabase()
+    .select({ id: catalogTaxes.id })
+    .from(catalogTaxes)
+    .where(eq(catalogTaxes.id, taxId))
+    .get();
+
   if (row) throw new CatalogError("Tax id already exists.", 409);
 }
 
@@ -453,13 +565,19 @@ function uniqueName(baseName: string, existing: Set<string>) {
 }
 
 function nextCategorySortOrder() {
-  const row = getDatabase().prepare("SELECT COALESCE(MAX(sort_order), 0) + 10 AS count FROM catalog_categories").get() as CountRow;
-  return row.count;
+  const row = getDrizzleDatabase()
+    .select({ count: sql<number>`COALESCE(MAX(${catalogCategories.sortOrder}), 0) + 10` })
+    .from(catalogCategories)
+    .get();
+  return row?.count ?? 10;
 }
 
 function nextTaxSortOrder() {
-  const row = getDatabase().prepare("SELECT COALESCE(MAX(sort_order), 0) + 10 AS count FROM catalog_taxes").get() as CountRow;
-  return row.count;
+  const row = getDrizzleDatabase()
+    .select({ count: sql<number>`COALESCE(MAX(${catalogTaxes.sortOrder}), 0) + 10` })
+    .from(catalogTaxes)
+    .get();
+  return row?.count ?? 10;
 }
 
 function normalizeTaxId(value: string | undefined, name: string) {
@@ -482,15 +600,23 @@ function normalizeOptionalInteger(value: number | undefined, fallback: number) {
 }
 
 function toCatalogProduct(row: CatalogProductRow): CatalogProduct {
-  return { id: row.id, product_type: row.product_type, name: row.name, category_id: row.category_id, category: row.category, tax_id: row.tax_id ?? row.tax_code_id, price: row.price, tax_code_id: row.tax_code_id, tax_code_name: row.tax_code_name, tax_rate_bps: row.tax_rate_bps, is_available: row.is_available === 1, isAvailable: row.is_available === 1, station: row.station, created_at: row.created_at, updated_at: row.updated_at };
+  return { id: row.id, product_type: toProductType(row.productType), name: row.name, category_id: row.categoryId, category: row.category, tax_id: row.taxId ?? row.taxCodeId, price: row.price, tax_code_id: row.taxCodeId, tax_code_name: row.taxCodeName, tax_rate_bps: row.taxRateBps, is_available: row.isAvailable === 1, isAvailable: row.isAvailable === 1, station: row.station, created_at: row.createdAt, updated_at: row.updatedAt };
 }
 
 function toCatalogCategory(row: CatalogCategoryRow): CatalogCategory {
-  return { id: row.id, name: row.name, sort_order: row.sort_order, product_count: row.product_count, created_at: row.created_at, updated_at: row.updated_at };
+  return { id: row.id, name: row.name, sort_order: row.sortOrder, product_count: row.productCount, created_at: row.createdAt, updated_at: row.updatedAt };
 }
 
 function toCatalogTax(row: CatalogTaxRow): CatalogTax {
-  return { id: row.id, name: row.name, rate_bps: row.rate_bps, sort_order: row.sort_order, product_count: row.product_count, created_at: row.created_at, updated_at: row.updated_at };
+  return { id: row.id, name: row.name, rate_bps: row.rateBps, sort_order: row.sortOrder, product_count: row.productCount, created_at: row.createdAt, updated_at: row.updatedAt };
+}
+
+function toProductType(value: string): PosProduct["product_type"] {
+  if (value !== "BASIC" && value !== "SERVICE") {
+    throw new CatalogError("Stored product type is invalid.", 500);
+  }
+
+  return value;
 }
 
 function slugify(value: string) {

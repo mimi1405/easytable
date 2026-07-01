@@ -1,23 +1,29 @@
 {
-    "name":  "local-master",
-    "private":  true,
-    "version":  "0.1.0",
-    "type":  "module",
-    "scripts":  {
-                    "dev":  "tsx watch src/index.ts",
-                    "dev:master":  "npm run dev",
-                    "dev:realtime":  "npm run dev",
-                    "build":  "tsc",
-                    "start":  "node dist/index.js"
-                },
-    "dependencies":  {
-                         "@fastify/cors":  "^10.0.1",
-                         "@fastify/websocket":  "^11.0.1",
-                         "fastify":  "^5.2.0"
-                     },
-    "devDependencies":  {
-                            "@types/node":  "^24.0.10",
-                            "tsx":  "^4.20.0",
-                            "typescript":  "~5.8.3"
-                        }
+    "name": "local-master",
+    "private": true,
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/index.ts",
+        "dev:master": "npm run dev",
+        "dev:realtime": "npm run dev",
+        "db:generate": "drizzle-kit generate",
+        "db:studio": "drizzle-kit studio",
+        "build": "tsc",
+        "start": "node dist/index.js"
+    },
+    "dependencies": {
+        "@fastify/cors": "^10.0.1",
+        "@fastify/websocket": "^11.0.1",
+        "@types/better-sqlite3": "^7.6.13",
+        "better-sqlite3": "^12.11.1",
+        "drizzle-kit": "^0.31.10",
+        "drizzle-orm": "^0.45.2",
+        "fastify": "^5.2.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.10",
+        "tsx": "^4.20.0",
+        "typescript": "~5.8.3"
+    }
 }
