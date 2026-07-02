@@ -46,3 +46,26 @@ export type LocationCreateRequest = {
 };
 
 export type LocationUpdateRequest = Partial<LocationCreateRequest>;
+
+export type CatalogOutputStationKind = "KDS_AND_PRINTER" | "KDS" | "PRINTER" | "NONE";
+
+export type CatalogOutputStation = {
+  id: string;
+  tenant_id: string;
+  location_id: string | null;
+  name: string;
+  kind: CatalogOutputStationKind;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CatalogOutputStationCreateRequest = {
+  name: string;
+  kind: CatalogOutputStationKind;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+export type CatalogOutputStationUpdateRequest = Partial<CatalogOutputStationCreateRequest>;

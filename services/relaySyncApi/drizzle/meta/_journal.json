@@ -15,6 +15,13 @@
       "when": 1782925593009,
       "tag": "0001_majestic_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783020000000,
+      "tag": "0002_location_output_stations",
+      "breakpoints": true
     }
   ]
 }

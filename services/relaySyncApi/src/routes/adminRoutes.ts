@@ -1,8 +1,16 @@
 import type { FastifyInstance } from "fastify";
 
 import { createLocation, listLocations, updateLocation } from "../store/locationStore.js";
+import { createOutputStation, listOutputStations, updateOutputStation } from "../store/outputStationStore.js";
 import { createTenant, listTenants, updateTenant } from "../store/tenantStore.js";
-import type { LocationCreateRequest, LocationUpdateRequest, TenantCreateRequest, TenantUpdateRequest } from "../types.js";
+import type {
+  CatalogOutputStationCreateRequest,
+  CatalogOutputStationUpdateRequest,
+  LocationCreateRequest,
+  LocationUpdateRequest,
+  TenantCreateRequest,
+  TenantUpdateRequest
+} from "../types.js";
 
 export async function registerAdminRoutes(app: FastifyInstance) {
   app.get("/api/admin/tenants", async () => ({ data: await listTenants() }));
@@ -29,5 +37,24 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.patch<{ Params: { tenantId: string; locationId: string }; Body: LocationUpdateRequest }>(
     "/api/admin/tenants/:tenantId/locations/:locationId",
     async (request) => updateLocation(request.params.tenantId, request.params.locationId, request.body),
+  );
+
+  app.get<{ Params: { tenantId: string; locationId: string } }>(
+    "/api/admin/tenants/:tenantId/locations/:locationId/output-stations",
+    async (request) => ({ data: await listOutputStations(request.params.tenantId, request.params.locationId) }),
+  );
+
+  app.post<{ Params: { tenantId: string; locationId: string }; Body: CatalogOutputStationCreateRequest }>(
+    "/api/admin/tenants/:tenantId/locations/:locationId/output-stations",
+    async (request, reply) =>
+      reply.code(201).send(await createOutputStation(request.params.tenantId, request.params.locationId, request.body)),
+  );
+
+  app.patch<{
+    Params: { tenantId: string; locationId: string; stationId: string };
+    Body: CatalogOutputStationUpdateRequest;
+  }>(
+    "/api/admin/tenants/:tenantId/locations/:locationId/output-stations/:stationId",
+    async (request) => updateOutputStation(request.params.tenantId, request.params.locationId, request.params.stationId, request.body),
   );
 }

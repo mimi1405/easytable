@@ -43,6 +43,27 @@ export type LocationInput = {
   status: LocationStatus;
 };
 
+export type OutputStationKind = "KDS_AND_PRINTER" | "KDS" | "PRINTER" | "NONE";
+
+export type OutputStation = {
+  id: string;
+  tenant_id: string;
+  location_id: string | null;
+  name: string;
+  kind: OutputStationKind;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OutputStationInput = {
+  name: string;
+  kind: OutputStationKind;
+  is_active: boolean;
+  sort_order: number;
+};
+
 const configuredUrl = import.meta.env.VITE_RELAY_SYNC_API_URL as string | undefined;
 
 export function getRelaySyncApiUrl() {
@@ -72,6 +93,34 @@ export function createLocation(tenantId: string, input: LocationInput) {
 export function updateLocation(tenantId: string, locationId: string, input: Partial<LocationInput>) {
   return writeJson<Location>(
     "/api/admin/tenants/" + encodeURIComponent(tenantId) + "/locations/" + encodeURIComponent(locationId),
+    "PATCH",
+    input,
+  );
+}
+
+export function loadOutputStations(tenantId: string, locationId: string) {
+  return readJson<OutputStation[]>(
+    "/api/admin/tenants/" + encodeURIComponent(tenantId) + "/locations/" + encodeURIComponent(locationId) + "/output-stations",
+    [],
+  );
+}
+
+export function createOutputStation(tenantId: string, locationId: string, input: OutputStationInput) {
+  return writeJson<OutputStation>(
+    "/api/admin/tenants/" + encodeURIComponent(tenantId) + "/locations/" + encodeURIComponent(locationId) + "/output-stations",
+    "POST",
+    input,
+  );
+}
+
+export function updateOutputStation(tenantId: string, locationId: string, stationId: string, input: Partial<OutputStationInput>) {
+  return writeJson<OutputStation>(
+    "/api/admin/tenants/" +
+      encodeURIComponent(tenantId) +
+      "/locations/" +
+      encodeURIComponent(locationId) +
+      "/output-stations/" +
+      encodeURIComponent(stationId),
     "PATCH",
     input,
   );

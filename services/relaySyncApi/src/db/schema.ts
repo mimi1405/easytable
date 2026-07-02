@@ -72,12 +72,16 @@ export const catalogTaxes = pgTable("catalog_taxes", {
 export const catalogOutputStations = pgTable("catalog_output_stations", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").references(() => locations.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   kind: text("kind").notNull(),
   isActive: integer("is_active").notNull(),
   sortOrder: integer("sort_order").notNull(),
   ...timestamps,
-}, (table) => [index("idx_catalog_output_stations_tenant").on(table.tenantId, table.isActive, table.sortOrder)]);
+}, (table) => [
+  index("idx_catalog_output_stations_tenant").on(table.tenantId, table.isActive, table.sortOrder),
+  index("idx_catalog_output_stations_location").on(table.tenantId, table.locationId, table.isActive, table.sortOrder),
+]);
 
 export const catalogProducts = pgTable("catalog_products", {
   id: text("id").primaryKey(),
