@@ -3,6 +3,12 @@ import { Socket } from "node:net";
 import { listCatalogOutputStations } from "../catalogStore.js";
 import { broadcast } from "../realtime.js";
 import {
+  appendOutboxEvent,
+  beginIdempotentCommand,
+  completeIdempotentCommand,
+  failIdempotentCommand
+} from "./commandStore.js";
+import {
   localDevices,
   persistLocalDevices,
   persistPosDeviceBindings,
@@ -38,6 +44,7 @@ import type {
   PrintJob,
   PrintLog,
   PrintLogSource,
+  RetryPrintJobRequest,
   StationDeviceBinding,
   StationDeviceBindingUpdateRequest
 } from "../types.js";
@@ -103,7 +110,29 @@ export function listPrintJobs(): PrintJob[] {
     .sort((left, right) => right.created_at - left.created_at || (left.station_name ?? "").localeCompare(right.station_name ?? ""));
 }
 
-export function retryPrintJob(jobId: string) {
+export function retryPrintJob(jobId: string, request: RetryPrintJobRequest = {}) {
+  const requestId = request.request_id?.trim();
+
+  if (requestId) {
+    const command = beginIdempotentCommand("PRINT_JOB_RETRY", requestId, { job_id: jobId });
+
+    if (command.mode === "replay") {
+      return command.result as PrintJob;
+    }
+
+    try {
+      const job = retryPrintJobUnchecked(jobId);
+      appendOutboxEvent("PRINT_JOB_RETRY_QUEUED", job.id, job);
+      return completeIdempotentCommand(command.entry, job);
+    } catch (error) {
+      return failIdempotentCommand(command.entry, error);
+    }
+  }
+
+  return retryPrintJobUnchecked(jobId);
+}
+
+function retryPrintJobUnchecked(jobId: string) {
   const job = printJobs.find((entry) => entry.id === jobId);
 
   if (!job) {

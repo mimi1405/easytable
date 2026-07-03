@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import { getProductById } from "../catalogStore.js";
+import {
+  appendOutboxEvent,
+  beginIdempotentCommand,
+  completeIdempotentCommand,
+  failIdempotentCommand
+} from "./commandStore.js";
 import { rebuildKdsTicketsForOrder } from "./kdsStore.js";
 import { rebuildStationPrintJobsForOrder, enqueueReceiptPrintJob } from "./printStore.js";
 import { areas, layoutTables } from "./storeSeeds.js";
@@ -48,11 +54,13 @@ export type OrderSnapshotResult = {
   kdsTicketsUpdated: KdsTicket[];
   printJobsCreated: PrintJob[];
   printJobsUpdated: PrintJob[];
+  replayed?: boolean;
 };
 
 export type PaymentResult = {
   payment: CompletedMockPayment;
   table: Table | null;
+  replayed?: boolean;
 };
 
 export function listOpenOrders() {
@@ -77,6 +85,33 @@ export function getOpenTableOrderBasket(tableId: string): OpenTableOrderBasket |
 }
 
 export function createOrderSnapshot(request: CreateOrderSnapshotRequest): OrderSnapshotResult {
+  validateOrderSnapshotRequest(request);
+
+  const requestId = request.request_id?.trim();
+
+  if (requestId) {
+    const command = beginIdempotentCommand("ORDER_SNAPSHOT", requestId, {
+      lines: request.lines,
+      table_context: request.table_context
+    });
+
+    if (command.mode === "replay") {
+      return { ...(command.result as OrderSnapshotResult), replayed: true };
+    }
+
+    try {
+      const result = createOrderSnapshotUnchecked(request);
+      appendOutboxEvent("ORDER_RECORDED", result.order.id, result.order);
+      return completeIdempotentCommand(command.entry, result);
+    } catch (error) {
+      return failIdempotentCommand(command.entry, error);
+    }
+  }
+
+  return createOrderSnapshotUnchecked(request);
+}
+
+function createOrderSnapshotUnchecked(request: CreateOrderSnapshotRequest): OrderSnapshotResult {
   validateOrderSnapshotRequest(request);
 
   const tableContext = request.table_context;
@@ -107,7 +142,43 @@ export function completeMockPayment(request: CompleteMockPaymentRequest): Paymen
   if (existingPayment) {
     return {
       payment: toCompletedMockPayment(existingPayment),
-      table: tableForPayment(existingPayment)
+      table: tableForPayment(existingPayment),
+      replayed: true
+    };
+  }
+
+  const command = beginIdempotentCommand("PAYMENT_LOCAL_COMPLETE", requestId, {
+    lines: request.lines,
+    table_context: request.table_context,
+    payment_method: request.payment_method,
+    received_cash: request.received_cash ?? null,
+    change_given: request.change_given ?? null,
+    terminal_id: request.terminal_id ?? null
+  });
+
+  if (command.mode === "replay") {
+    return { ...(command.result as PaymentResult), replayed: true };
+  }
+
+  try {
+    const result = completeMockPaymentUnchecked(request, requestId);
+    if (result.payment.lifecycle_state === "completed") {
+      appendOutboxEvent("PAYMENT_COMPLETED", result.payment.payment_id, result.payment);
+    }
+    return completeIdempotentCommand(command.entry, result);
+  } catch (error) {
+    return failIdempotentCommand(command.entry, error);
+  }
+}
+
+function completeMockPaymentUnchecked(request: CompleteMockPaymentRequest, requestId: string): PaymentResult {
+  const existingPayment = payments.find((payment) => payment.requestId === requestId);
+
+  if (existingPayment) {
+    return {
+      payment: toCompletedMockPayment(existingPayment),
+      table: tableForPayment(existingPayment),
+      replayed: true
     };
   }
 
@@ -186,7 +257,44 @@ export function startWalleeTerminalPayment(request: StartWalleeTerminalPaymentRe
   if (existingPayment) {
     return {
       payment: toCompletedMockPayment(existingPayment),
-      table: tableForPayment(existingPayment)
+      table: tableForPayment(existingPayment),
+      replayed: true
+    };
+  }
+
+  const command = beginIdempotentCommand("PAYMENT_WALLEE_TERMINAL_START", requestId, {
+    lines: request.lines,
+    table_context: request.table_context,
+    terminal_id: request.terminal_id ?? null,
+    simulator_outcome: request.simulator_outcome ?? null
+  });
+
+  if (command.mode === "replay") {
+    return { ...(command.result as PaymentResult), replayed: true };
+  }
+
+  try {
+    const result = startWalleeTerminalPaymentUnchecked(request, requestId);
+    if (result.payment.lifecycle_state === "completed") {
+      appendOutboxEvent("PAYMENT_COMPLETED", result.payment.payment_id, result.payment);
+    }
+    return completeIdempotentCommand(command.entry, result);
+  } catch (error) {
+    return failIdempotentCommand(command.entry, error);
+  }
+}
+
+function startWalleeTerminalPaymentUnchecked(
+  request: StartWalleeTerminalPaymentRequest,
+  requestId: string
+): PaymentResult {
+  const existingPayment = payments.find((payment) => payment.requestId === requestId);
+
+  if (existingPayment) {
+    return {
+      payment: toCompletedMockPayment(existingPayment),
+      table: tableForPayment(existingPayment),
+      replayed: true
     };
   }
 

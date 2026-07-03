@@ -5,6 +5,7 @@ import { cn } from "@easytable/ui/lib/utils";
 
 import { TouchNumberPad } from "../components/TouchNumberPad";
 import {
+  createClientRequestId,
   getStoredTerminalConfig,
   loadCurrentBusinessDate,
   loadDayClosePreview,
@@ -134,6 +135,7 @@ export function CashCloseScreen({ onBack }: CashCloseScreenProps) {
 
     try {
       const saved = await saveDayClose({
+        request_id: createClientRequestId("day_close"),
         business_date: businessDate,
         business_day_cutover_time: cutoverTime,
         counted_cash: countedCash,

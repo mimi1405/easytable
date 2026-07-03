@@ -33,24 +33,26 @@ export async function registerOrderRoutes(app: FastifyInstance) {
     "/api/order-snapshots",
     { schema: createOrderSnapshotSchema },
     async (request, reply) => {
-      const { order, table, kdsTicketsCreated, kdsTicketsUpdated, printJobsCreated, printJobsUpdated } =
-        createOrderSnapshot(request.body.request);
+      const result = createOrderSnapshot(request.body.request);
+      const { order, table, kdsTicketsCreated, kdsTicketsUpdated, printJobsCreated, printJobsUpdated } = result;
 
-      broadcast("ORDER_CREATED", { order });
-      for (const ticket of kdsTicketsCreated) {
-        broadcast("KDS_TICKET_CREATED", { ticket });
+      if (!result.replayed) {
+        broadcast("ORDER_CREATED", { order });
+        for (const ticket of kdsTicketsCreated) {
+          broadcast("KDS_TICKET_CREATED", { ticket });
+        }
+        for (const ticket of kdsTicketsUpdated) {
+          broadcast("KDS_TICKET_UPDATED", { ticket });
+        }
+        for (const job of printJobsCreated) {
+          broadcast("PRINT_JOB_CREATED", { job });
+        }
+        for (const job of printJobsUpdated) {
+          broadcast("PRINT_JOB_UPDATED", { job });
+        }
+        broadcast("KDS_TICKETS_REBUILT", { order });
+        broadcast("TABLE_UPDATED", { table });
       }
-      for (const ticket of kdsTicketsUpdated) {
-        broadcast("KDS_TICKET_UPDATED", { ticket });
-      }
-      for (const job of printJobsCreated) {
-        broadcast("PRINT_JOB_CREATED", { job });
-      }
-      for (const job of printJobsUpdated) {
-        broadcast("PRINT_JOB_UPDATED", { job });
-      }
-      broadcast("KDS_TICKETS_REBUILT", { order });
-      broadcast("TABLE_UPDATED", { table });
 
       return reply.code(201).send(order);
     }
@@ -60,14 +62,17 @@ export async function registerOrderRoutes(app: FastifyInstance) {
     "/api/mock-payments/complete",
     { schema: completeMockPaymentSchema },
     async (request, reply) => {
-      const { payment, table } = completeMockPayment(request.body.request);
+      const result = completeMockPayment(request.body.request);
+      const { payment, table } = result;
 
-      broadcast("PAYMENT_UPDATED", { payment });
-      if (payment.lifecycle_state === "completed") {
-        broadcast("PAYMENT_COMPLETED", { payment });
-      }
-      if (table) {
-        broadcast("TABLE_UPDATED", { table });
+      if (!result.replayed) {
+        broadcast("PAYMENT_UPDATED", { payment });
+        if (payment.lifecycle_state === "completed") {
+          broadcast("PAYMENT_COMPLETED", { payment });
+        }
+        if (table) {
+          broadcast("TABLE_UPDATED", { table });
+        }
       }
 
       return reply.code(201).send(payment);
@@ -78,14 +83,17 @@ export async function registerOrderRoutes(app: FastifyInstance) {
     "/api/payments/wallee-terminal/start",
     { schema: completeMockPaymentSchema },
     async (request, reply) => {
-      const { payment, table } = startWalleeTerminalPayment(request.body.request);
+      const result = startWalleeTerminalPayment(request.body.request);
+      const { payment, table } = result;
 
-      broadcast("PAYMENT_UPDATED", { payment });
-      if (payment.lifecycle_state === "completed") {
-        broadcast("PAYMENT_COMPLETED", { payment });
-      }
-      if (table) {
-        broadcast("TABLE_UPDATED", { table });
+      if (!result.replayed) {
+        broadcast("PAYMENT_UPDATED", { payment });
+        if (payment.lifecycle_state === "completed") {
+          broadcast("PAYMENT_COMPLETED", { payment });
+        }
+        if (table) {
+          broadcast("TABLE_UPDATED", { table });
+        }
       }
 
       return reply.code(payment.lifecycle_state === "completed" ? 201 : 202).send(payment);

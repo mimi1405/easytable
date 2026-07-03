@@ -26,6 +26,7 @@ import type {
   LocalDeviceCreateRequest,
   LocalDeviceUpdateRequest,
   PosDeviceBindingUpdateRequest,
+  RetryPrintJobRequest,
   SaveDayCloseRequest,
   StationDeviceBindingUpdateRequest
 } from "../types.js";
@@ -63,9 +64,9 @@ export async function registerBusinessRoutes(app: FastifyInstance) {
 
   app.get("/api/print-jobs", async () => ({ data: listPrintJobs() }));
 
-  app.post<{ Params: { jobId: string } }>(
+  app.post<{ Params: { jobId: string }; Body: PosRequestBody<RetryPrintJobRequest> }>(
     "/api/print-jobs/:jobId/retry",
-    async (request) => retryPrintJob(request.params.jobId)
+    async (request) => retryPrintJob(request.params.jobId, request.body.request)
   );
 
   app.post("/api/print-logs/clear", async () => clearPrintLogs());

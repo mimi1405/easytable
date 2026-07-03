@@ -210,6 +210,12 @@ export type CreatedOrderSnapshot = {
   continued_existing_order: boolean;
 };
 
+export type CreateOrderSnapshotRequest = {
+  request_id: string;
+  lines: BasketLine[];
+  table_context: TableContext;
+};
+
 export type MockPaymentMethod = "CASH" | "CARD_MANUAL" | "WALLEE_TERMINAL";
 
 export type PaymentLifecycleState =
@@ -377,4 +383,12 @@ export type SavedDayClose = {
   order_count: number;
   item_count: number;
   created_at: number;
+};
+
+export type SaveDayCloseRequest = {
+  request_id: string;
+  business_date: string;
+  business_day_cutover_time: string;
+  counted_cash: number;
+  terminal_id?: string;
 };

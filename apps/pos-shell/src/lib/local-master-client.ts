@@ -2,6 +2,7 @@ import type {
   BasketLine,
   CatalogOutputStation,
   CompletedMockPayment,
+  CreateOrderSnapshotRequest,
   DayClosePreview,
   CreatedOrderSnapshot,
   LocalDevice,
@@ -18,6 +19,7 @@ import type {
   PosProduct,
   ProductVariantGroup,
   SavedDayClose,
+  SaveDayCloseRequest,
   StationDeviceBinding,
   StationDeviceBindingUpdateRequest,
   TableContext,
@@ -229,10 +231,7 @@ export function loadOpenTableOrderBasket(tableId: string) {
   );
 }
 
-export function createOrderSnapshot(request: {
-  lines: BasketLine[];
-  table_context: TableContext;
-}) {
+export function createOrderSnapshot(request: CreateOrderSnapshotRequest) {
   return writeJson<CreatedOrderSnapshot>("/api/order-snapshots", { request });
 }
 
@@ -282,7 +281,9 @@ export function loadPrintJobs() {
 }
 
 export function retryPrintJob(jobId: string) {
-  return writeJson<PrintJob>("/api/print-jobs/" + encodeURIComponent(jobId) + "/retry", { request: {} });
+  return writeJson<PrintJob>("/api/print-jobs/" + encodeURIComponent(jobId) + "/retry", {
+    request: { request_id: createClientRequestId("print_retry") },
+  });
 }
 
 export function clearPrintLogs() {
@@ -321,12 +322,7 @@ export function loadDayClosePreview(request: {
   return writeJson<DayClosePreview>("/api/day-close/preview", { request });
 }
 
-export function saveDayClose(request: {
-  business_date: string;
-  business_day_cutover_time: string;
-  counted_cash: number;
-  terminal_id?: string;
-}) {
+export function saveDayClose(request: SaveDayCloseRequest) {
   return writeJson<SavedDayClose>("/api/day-close", { request });
 }
 
@@ -457,4 +453,12 @@ function writeLocalStorageTerminalConfig(config: TerminalPairingConfig) {
 
 function normalizeBaseUrl(url: string) {
   return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+export function createClientRequestId(prefix: string) {
+  if (window.crypto?.randomUUID) {
+    return prefix + "_" + window.crypto.randomUUID();
+  }
+
+  return prefix + "_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2);
 }

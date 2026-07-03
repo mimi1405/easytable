@@ -1,5 +1,11 @@
 import { enqueueZReportPrintJob } from "./printStore.js";
 import { dayCloses, payments, persistDayCloses, posOrders } from "./storeState.js";
+import {
+  appendOutboxEvent,
+  beginIdempotentCommand,
+  completeIdempotentCommand,
+  failIdempotentCommand
+} from "./commandStore.js";
 import type { PosOrderSnapshot, StoredDayClose } from "./storeState.js";
 import type {
   CurrentBusinessDate,
@@ -36,7 +42,11 @@ export function getDayClosePreview(request: DayClosePreviewRequest): DayClosePre
     .filter((payment) => payment.method === "CASH")
     .reduce((sum, payment) => sum + payment.amount, 0);
   const expectedCard = completedPayments
-    .filter((payment) => payment.method === "CARD_MANUAL" || payment.method === "WALLEE")
+    .filter((payment) =>
+      payment.method === "CARD_MANUAL" ||
+      payment.method === "WALLEE" ||
+      payment.method === "WALLEE_TERMINAL"
+    )
     .reduce((sum, payment) => sum + payment.amount, 0);
   const itemCount = paidOrders.reduce(
     (sum, order) => sum + order.lines.reduce((lineSum, line) => lineSum + line.quantity, 0),
@@ -66,6 +76,27 @@ export function getDayClosePreview(request: DayClosePreviewRequest): DayClosePre
 }
 
 export function saveDayClose(request: SaveDayCloseRequest): SavedDayClose {
+  const command = beginIdempotentCommand("DAY_CLOSE_SAVE", request.request_id, {
+    business_date: request.business_date,
+    business_day_cutover_time: request.business_day_cutover_time,
+    counted_cash: request.counted_cash,
+    terminal_id: request.terminal_id ?? null
+  });
+
+  if (command.mode === "replay") {
+    return command.result as SavedDayClose;
+  }
+
+  try {
+    const saved = saveDayCloseUnchecked(request);
+    appendOutboxEvent("DAY_CLOSE_SAVED", saved.business_date, saved);
+    return completeIdempotentCommand(command.entry, saved);
+  } catch (error) {
+    return failIdempotentCommand(command.entry, error);
+  }
+}
+
+function saveDayCloseUnchecked(request: SaveDayCloseRequest): SavedDayClose {
   if (request.counted_cash < 0) {
     throw new Error("Counted cash cannot be negative.");
   }

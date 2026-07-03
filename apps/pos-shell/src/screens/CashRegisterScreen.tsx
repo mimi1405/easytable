@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PosScreen } from "../App";
 import {
   completeMockPayment,
+  createClientRequestId,
   createOrderSnapshot,
   getStoredTerminalConfig,
   loadOpenTableOrderBasket,
@@ -409,6 +410,7 @@ export function CashRegisterScreen({
 
     try {
       const order = await createOrderSnapshot({
+        request_id: createClientRequestId("order_snapshot"),
         lines: basketLines,
         table_context: tableContext,
       });
@@ -455,7 +457,7 @@ export function CashRegisterScreen({
     setOrderNotice(null);
 
     try {
-      const requestId = createPaymentRequestId();
+      const requestId = createClientRequestId("payment");
       const terminalId = getStoredTerminalConfig()?.terminalId ?? "pos-shell";
       const payment =
         paymentRequest.payment_method === "WALLEE_TERMINAL"
@@ -716,14 +718,5 @@ export function CashRegisterScreen({
     </main>
   );
 }
-
-function createPaymentRequestId() {
-  if (window.crypto?.randomUUID) {
-    return window.crypto.randomUUID();
-  }
-
-  return "payreq_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2);
-}
-
 
 

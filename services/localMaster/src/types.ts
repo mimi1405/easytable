@@ -348,6 +348,7 @@ export type UpdateKdsTicketStatusRequest = {
 };
 
 export type CreateOrderSnapshotRequest = {
+  request_id?: string;
   lines: BasketLine[];
   table_context: TableContext | null;
 };
@@ -481,10 +482,15 @@ export type DayCloseProductSale = {
 };
 
 export type SaveDayCloseRequest = {
+  request_id: string;
   business_date: string;
   business_day_cutover_time: string;
   counted_cash: number;
   terminal_id?: string;
+};
+
+export type RetryPrintJobRequest = {
+  request_id?: string;
 };
 
 export type SavedDayClose = {
