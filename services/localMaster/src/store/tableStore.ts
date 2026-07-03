@@ -49,6 +49,7 @@ export function getTableLayout(): TableLayout {
 export function findOpenPosOrderForTable(tableId: string): PosOrderSnapshot | undefined {
   return posOrders.find(
     (order) =>
+      order.table_context !== null &&
       order.table_context.table_id === tableId &&
       order.status === "OPEN" &&
       order.payment_status === "UNPAID"

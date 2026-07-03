@@ -14,6 +14,7 @@ export type LocationFormState = {
   slug: string;
   address: string;
   local_master_instance_id: string;
+  service_mode: LocationInput["service_mode"];
   status: LocationInput["status"];
 };
 
@@ -42,6 +43,7 @@ export function createLocationFormState(location?: Location): LocationFormState 
     slug: location?.slug ?? "",
     address: location?.address ?? "",
     local_master_instance_id: location?.local_master_instance_id ?? "",
+    service_mode: location?.service_mode ?? "TABLE_SERVICE",
     status: location?.status ?? "ACTIVE",
   };
 }

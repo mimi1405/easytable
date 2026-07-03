@@ -22,6 +22,7 @@ export type TenantInput = {
 };
 
 export type LocationStatus = "ACTIVE" | "SUSPENDED";
+export type LocationServiceMode = "TABLE_SERVICE" | "COUNTER_SERVICE";
 
 export type Location = {
   id: string;
@@ -30,6 +31,7 @@ export type Location = {
   slug: string;
   address: string | null;
   local_master_instance_id: string | null;
+  service_mode: LocationServiceMode;
   status: LocationStatus;
   created_at: string;
   updated_at: string;
@@ -40,6 +42,7 @@ export type LocationInput = {
   slug: string;
   address: string | null;
   local_master_instance_id: string | null;
+  service_mode: LocationServiceMode;
   status: LocationStatus;
 };
 

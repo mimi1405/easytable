@@ -238,7 +238,7 @@ export function createOrderSnapshot(request: {
 export function completeMockPayment(
   request: {
     lines: BasketLine[];
-    table_context: TableContext;
+    table_context: TableContext | null;
   } & MockPaymentRequest,
 ) {
   return writeJson<CompletedMockPayment>("/api/mock-payments/complete", { request });

@@ -48,7 +48,7 @@ export function formatStationPrintBody(order: PosOrderSnapshot, _station: string
   return [
     ESC_POS_INIT,
     largeLine("#" + order.order_number),
-    largeLine("TISCH " + order.table_context.table_name),
+    largeLine(orderLocationLabel(order).toUpperCase()),
     ESC_POS_NORMAL + formatStationTimestamp(),
     separator,
     "",
@@ -71,7 +71,7 @@ export function formatReceiptPrintBody(order: PosOrderSnapshot, payment: Complet
   return [
     "EasyTable Beleg",
     "Auftrag: " + order.order_number,
-    "Tisch: " + order.table_context.table_name,
+    orderLocationLabel(order),
     "Zeit: " + new Date(payment.paid_at).toLocaleString("de-CH"),
     "",
     ...order.lines.map((line) => {
@@ -86,6 +86,10 @@ export function formatReceiptPrintBody(order: PosOrderSnapshot, payment: Complet
     ...(payment.received_cash !== null ? ["Erhalten: " + formatMoney(payment.received_cash)] : []),
     ...(payment.change_given !== null ? ["Rueckgeld: " + formatMoney(payment.change_given)] : [])
   ].join("\n");
+}
+
+export function orderLocationLabel(order: PosOrderSnapshot) {
+  return order.table_context ? "Tisch: " + order.table_context.table_name : "Counter";
 }
 
 export function formatZReportPrintBody(dayClose: StoredDayClose) {

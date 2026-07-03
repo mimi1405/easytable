@@ -4,7 +4,7 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 
 import { getDrizzleDatabase } from "../db/client.js";
 import { locations, tenants } from "../db/schema.js";
-import type { Location, LocationCreateRequest, LocationStatus, LocationUpdateRequest } from "../types.js";
+import type { Location, LocationCreateRequest, LocationServiceMode, LocationStatus, LocationUpdateRequest } from "../types.js";
 import { ApiError } from "./errors.js";
 
 type LocationRow = typeof locations.$inferSelect;
@@ -36,6 +36,7 @@ export async function createLocation(tenantId: string, request: LocationCreateRe
       slug: input.slug,
       address: input.address,
       localMasterInstanceId: input.local_master_instance_id,
+      serviceMode: input.service_mode,
       status: input.status,
       createdAt: now,
       updatedAt: now,
@@ -52,6 +53,7 @@ export async function updateLocation(tenantId: string, locationId: string, reque
     slug: request.slug ?? current.slug,
     address: request.address === undefined ? current.address : request.address,
     local_master_instance_id: request.local_master_instance_id === undefined ? current.local_master_instance_id : request.local_master_instance_id,
+    service_mode: request.service_mode ?? current.service_mode,
     status: request.status ?? current.status,
   });
 
@@ -66,6 +68,7 @@ export async function updateLocation(tenantId: string, locationId: string, reque
       slug: input.slug,
       address: input.address,
       localMasterInstanceId: input.local_master_instance_id,
+      serviceMode: input.service_mode,
       status: input.status,
       updatedAt: new Date(),
     })
@@ -116,6 +119,7 @@ function normalizeLocationInput(request: LocationCreateRequest): Required<Locati
     slug: normalizeSlug(request.slug),
     address: normalizeOptionalText(request.address),
     local_master_instance_id: normalizeOptionalText(request.local_master_instance_id),
+    service_mode: normalizeServiceMode(request.service_mode ?? "TABLE_SERVICE"),
     status: normalizeStatus(request.status ?? "ACTIVE"),
   };
 }
@@ -149,6 +153,14 @@ function normalizeStatus(value: string): LocationStatus {
   return value;
 }
 
+function normalizeServiceMode(value: string): LocationServiceMode {
+  if (value !== "TABLE_SERVICE" && value !== "COUNTER_SERVICE") {
+    throw new ApiError("Location service mode must be TABLE_SERVICE or COUNTER_SERVICE.");
+  }
+
+  return value;
+}
+
 function toLocation(row: LocationRow): Location {
   return {
     id: row.id,
@@ -157,6 +169,7 @@ function toLocation(row: LocationRow): Location {
     slug: row.slug,
     address: row.address,
     local_master_instance_id: row.localMasterInstanceId,
+    service_mode: row.serviceMode as LocationServiceMode,
     status: row.status as LocationStatus,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),

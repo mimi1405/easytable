@@ -261,6 +261,30 @@ export type KdsTicket = {
   done_at: number | null;
 };
 
+export type LocationServiceMode = "TABLE_SERVICE" | "COUNTER_SERVICE";
+
+export type PosPeripheralSettings = {
+  enabled: boolean;
+  provider: string;
+  device_id: string | null;
+};
+
+export type PosSettings = {
+  schema_version: number;
+  tenant_id: string;
+  location_id: string;
+  service_mode: LocationServiceMode;
+  language: string;
+  business_day_cutover_time: string;
+  receipt_printer: PosPeripheralSettings;
+  payment_terminal: PosPeripheralSettings;
+};
+
+export type PosSettingsFile = {
+  path: string;
+  settings: PosSettings;
+};
+
 const configuredUrl = import.meta.env.VITE_LOCAL_REALTIME_URL as string | undefined;
 
 export function getLocalMasterUrl() {
@@ -273,6 +297,22 @@ export function getLocalMasterUrl() {
 
 export function loadCatalog() {
   return readJson<CatalogProduct[]>("/api/catalog", []);
+}
+
+export function loadPosSettings() {
+  return readJson<PosSettingsFile>("/api/pos-settings", {
+    path: "local-master://settings/pos-settings.json",
+    settings: {
+      schema_version: 1,
+      tenant_id: "",
+      location_id: "",
+      service_mode: "TABLE_SERVICE",
+      language: "de-CH",
+      business_day_cutover_time: "00:00",
+      receipt_printer: { enabled: false, provider: "none", device_id: null },
+      payment_terminal: { enabled: false, provider: "none", device_id: null },
+    },
+  });
 }
 
 export function loadTableLayout() {

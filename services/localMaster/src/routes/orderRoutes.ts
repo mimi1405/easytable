@@ -61,7 +61,9 @@ export async function registerOrderRoutes(app: FastifyInstance) {
       const { payment, table } = completeMockPayment(request.body.request);
 
       broadcast("PAYMENT_COMPLETED", { payment });
-      broadcast("TABLE_UPDATED", { table });
+      if (table) {
+        broadcast("TABLE_UPDATED", { table });
+      }
 
       return reply.code(201).send(payment);
     }

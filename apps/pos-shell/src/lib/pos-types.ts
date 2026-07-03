@@ -296,10 +296,13 @@ export type PosPeripheralSettings = {
   device_id: string | null;
 };
 
+export type LocationServiceMode = "TABLE_SERVICE" | "COUNTER_SERVICE";
+
 export type PosSettings = {
   schema_version: number;
   tenant_id: string;
   location_id: string;
+  service_mode: LocationServiceMode;
   language: string;
   business_day_cutover_time: string;
   receipt_printer: PosPeripheralSettings;

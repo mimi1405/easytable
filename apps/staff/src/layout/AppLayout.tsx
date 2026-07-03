@@ -24,10 +24,12 @@ import {
 } from "@easytable/ui/components/sidebar";
 import { TooltipProvider } from "@easytable/ui/components/tooltip";
 
+import type { LocationServiceMode } from "../lib/local-master";
 import type { AppView, OwnerCatalogSection, StaffModule, StaffScreen } from "./navigation";
 
 type AppLayoutProps = {
   view: AppView;
+  serviceMode: LocationServiceMode;
   onNavigate: (view: AppView) => void;
   children: ReactNode;
 };
@@ -61,11 +63,11 @@ const staffItems: Array<{
   { screen: "pickups", label: "Abholungen", icon: Bell },
 ];
 
-export function AppLayout({ view, onNavigate, children }: AppLayoutProps) {
+export function AppLayout({ view, serviceMode, onNavigate, children }: AppLayoutProps) {
   return (
     <TooltipProvider>
       <SidebarProvider>
-        <AppSidebar onNavigate={onNavigate} view={view} />
+        <AppSidebar onNavigate={onNavigate} serviceMode={serviceMode} view={view} />
         <SidebarInset className="min-h-svh bg-background">
           <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
             <SidebarTrigger className="shrink-0" />
@@ -82,7 +84,9 @@ export function AppLayout({ view, onNavigate, children }: AppLayoutProps) {
   );
 }
 
-function AppSidebar({ view, onNavigate }: Pick<AppLayoutProps, "view" | "onNavigate">) {
+function AppSidebar({ view, serviceMode, onNavigate }: Pick<AppLayoutProps, "view" | "serviceMode" | "onNavigate">) {
+  const isStaffModuleAvailable = serviceMode === "TABLE_SERVICE";
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -139,6 +143,10 @@ function AppSidebar({ view, onNavigate }: Pick<AppLayoutProps, "view" | "onNavig
                 }
 
                 if (item.module === "staff") {
+                  if (!isStaffModuleAvailable) {
+                    return null;
+                  }
+
                   return (
                     <SidebarMenuItem key={item.module}>
                       <SidebarMenuButton

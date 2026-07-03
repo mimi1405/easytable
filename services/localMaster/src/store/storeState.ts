@@ -31,7 +31,7 @@ export type StoredDayClose = SavedDayClose & {
 export type PosOrderSnapshot = {
   id: string;
   order_number: string;
-  table_context: TableContext;
+  table_context: TableContext | null;
   lines: BasketLine[];
   subtotal: number;
   tax_total: number;

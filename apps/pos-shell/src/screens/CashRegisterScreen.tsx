@@ -28,6 +28,7 @@ import type {
   ProductCard,
   ProductVariantGroup,
   ProductVariantGroupItem,
+  LocationServiceMode,
   TableContext,
 } from "../lib/pos-types";
 import { BasketPanel } from "./cash-register/BasketPanel";
@@ -39,6 +40,7 @@ import {
 } from "./cash-register/variantSelection";
 
 type CashRegisterScreenProps = {
+  serviceMode: LocationServiceMode;
   tableContext: TableContext | null;
   onNavigate: (screen: PosScreen) => void;
   onOrderCreated: () => void;
@@ -82,11 +84,13 @@ const productVisuals = [
 ] as const;
 
 export function CashRegisterScreen({
+  serviceMode,
   tableContext,
   onNavigate,
   onOrderCreated,
 }: CashRegisterScreenProps) {
   const showTopRegion = true;
+  const isCounterService = serviceMode === "COUNTER_SERVICE";
   const [products, setProducts] = useState<PosProduct[]>([]);
   const [selectedCategory, setSelectedCategory] = useState(allCategoryLabel);
   const [catalogViewMode, setCatalogViewMode] =
@@ -417,7 +421,7 @@ export function CashRegisterScreen({
       return;
     }
 
-    if (!tableContext) {
+    if (!tableContext && !isCounterService) {
       setOrderNotice("Bitte zuerst einen Tisch auswahlen.");
       return;
     }
@@ -427,7 +431,11 @@ export function CashRegisterScreen({
   }
 
   async function handleCompleteMockPayment(paymentRequest: MockPaymentRequest) {
-    if (basketLines.length === 0 || isCompletingPayment || !tableContext) {
+    if (basketLines.length === 0 || isCompletingPayment) {
+      return;
+    }
+
+    if (!tableContext && !isCounterService) {
       return;
     }
 
@@ -507,13 +515,17 @@ export function CashRegisterScreen({
               <p className="truncate text-sm font-black uppercase text-indigo-800">
                 {tableContext
                   ? `Tisch ${tableContext.table_name} Â· ${tableContext.area_name}`
-                  : "Tischbetrieb"}
+                  : isCounterService
+                    ? "Counterbetrieb"
+                    : "Tischbetrieb"}
               </p>
               <p className="truncate text-[0.7rem] font-bold uppercase text-slate-400">
                 {basketLines.length === 0
                   ? tableContext
                     ? `${tableContext.floor_name} Â· ${tableContext.seats} Sitzplatze`
-                    : "Keine Artikel gewahlt"
+                    : isCounterService
+                      ? "Direktverkauf"
+                      : "Keine Artikel gewahlt"
                   : `${basketLines.length} Positionen`}
               </p>
             </aside>
@@ -635,6 +647,7 @@ export function CashRegisterScreen({
           isSubmitting={isCreatingOrder || isCompletingPayment}
           bookLabel="Buchen"
           payLabel="Bezahlen"
+          showBookAction={!isCounterService}
           onDecreaseLine={decreaseBasketLine}
           onRemoveLine={removeBasketLine}
           onCreateOrder={() => void handleCreateOrderSnapshot()}

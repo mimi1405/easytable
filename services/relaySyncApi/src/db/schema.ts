@@ -45,6 +45,7 @@ export const locations = pgTable("locations", {
   slug: text("slug").notNull(),
   address: text("address"),
   localMasterInstanceId: text("local_master_instance_id"),
+  serviceMode: text("service_mode").notNull().default("TABLE_SERVICE"),
   status: text("status").notNull().default("ACTIVE"),
   ...timestamps,
 }, (table) => [

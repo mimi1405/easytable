@@ -1,0 +1,1 @@
+ALTER TABLE "locations" ADD COLUMN "service_mode" text DEFAULT 'TABLE_SERVICE' NOT NULL;

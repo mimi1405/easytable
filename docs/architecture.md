@@ -1,6 +1,6 @@
 # POS-Hospitality-System: Zielarchitektur
 
-> **Version:** 3.1
+> **Version:** 3.2
 > **Prinzip:** Erst lokal stabil, dann Cloud-Relay und Sync.
 > **Kernidee:** `localMaster` ist die lokale Wahrheit. `relaySyncApi` ist spaeter der Cloud-Treffpunkt fuer Sync, Remote Commands und Status.
 
@@ -27,6 +27,8 @@ Alle operativen und finanzkritischen Daten werden zuerst lokal gespeichert:
 * lokale Outbox/Inbox fuer spaeteren Sync
 
 Cloud-Funktionen duerfen den lokalen Betrieb erweitern, aber nicht ersetzen. Wenn die Cloud nicht erreichbar ist, bleiben POS-Shell, KDS und lokaler Servicebetrieb funktionsfaehig.
+
+Clients senden fuer operative Aenderungen Commands oder Requests. Der `localMaster` validiert, entscheidet, speichert die bestaetigte Wahrheit lokal und liefert erst dann Erfolg zurueck. UI-Clients duerfen keinen finalen Verkauf, keine finale Zahlung und keinen finalen Kuechenstatus selbst erfinden.
 
 ---
 
@@ -84,7 +86,8 @@ Aufgaben:
 * Realtime-Events verteilen
 * Terminal-/Geraete-Pairing verwalten
 * Tagesabschluss berechnen und speichern
-* spaeter Print Queue, Sync Outbox und Cloud Connector verwalten
+* Print Queue und lokale Outbox/Inbox verwalten
+* spaeter Cloud Connector zu `relaySyncApi` verwalten
 
 Netzwerkstandard:
 
@@ -157,10 +160,12 @@ KDS ist ein Client gegen den `localMaster`.
 Aufgaben:
 
 * neue Items live anzeigen
-* nach `station` filtern, z.B. Bar, Kueche, Shisha
+* nach stabiler `station_id` filtern, z.B. Bar, Kueche, Shisha als Anzeigename
 * Statusaenderungen senden
 
 KDS speichert nicht final. Der `localMaster` bleibt Master.
+
+Stationen sind Standort-/Tenant-Objekte. Routing nutzt stabile IDs wie `station_id`; Stationsnamen sind Anzeige- und Snapshot-Daten und duerfen nicht die technische Routing-Wahrheit sein.
 
 ### 3.5 RelaySyncApi
 
@@ -230,7 +235,7 @@ Pairing:
    * `pairedAt`
    * `lastSeenAt`
 
-Beim Start prueft der Client die gespeicherte `localMasterInstanceId`. Wenn eine andere Instanz antwortet, wird blockiert und eine Neu-Kopplung verlangt. So bucht keine Kasse versehentlich auf den falschen Master.
+Beim Start prueft der Client die gespeicherte `localMasterInstanceId`. Wenn eine andere Instanz antwortet oder die Instanz nicht verifizierbar ist, wird blockiert und eine Neu-Kopplung oder Wiederverbindung verlangt. So bucht keine Kasse versehentlich auf den falschen Master.
 
 ---
 
@@ -260,7 +265,45 @@ WebSocket-Events sind Hinweise. Die bestaetigte Wahrheit liegt lokal im `localMa
 
 ---
 
-## 6. Cloud Relay und Sync
+## 6. Command-, Idempotency- und Outbox-Modell
+
+Alle operativen Aktionen werden als Commands oder idempotente Requests behandelt. Das gilt lokal und spaeter ueber Relay:
+
+* Bestellung anlegen oder erweitern
+* Zahlung starten, bestaetigen oder korrigieren
+* KDS-Status aendern
+* Storno, Void oder Rabatt buchen
+* Tagesabschluss speichern
+* Print Job erzeugen oder wiederholen
+
+Jeder kritische Command braucht eine stabile `command_id` oder `request_id`. Wenn derselbe Command erneut ankommt, muss `localMaster` das bereits gespeicherte Ergebnis zurueckgeben oder sicher ablehnen. Reconnects, Doppelklicks, Timeouts und Relay-Replays duerfen keine doppelten Orders, Payments, Print Jobs oder Finanzrecords erzeugen.
+
+Der `localMaster` fuehrt eine lokale Outbox/Inbox in SQLite:
+
+* **Inbox:** eingehende lokale oder Relay-Commands, Idempotency-Key, Status und Ergebnis.
+* **Outbox:** bestaetigte lokale Ereignisse fuer Sync, Reporting, Replay, Diagnose und Cloud-Abgleich.
+
+Die Outbox ist nicht die operative Wahrheit, sondern ein durable Log der lokal bereits bestaetigten Wahrheit. Cloud-Sync liest spaeter daraus und darf langsam oder pausiert sein.
+
+Payment-Flows muessen externe Provider-Zustaende und lokale Persistenz getrennt modellieren. Ein Zahlungsanbieter kann Geld erfolgreich autorisieren oder abbuchen, waehrend die lokale Speicherung, der Belegdruck oder die Cloud-Synchronisierung fehlschlaegt. Dieser Fall ist kein normaler `success/fail`, sondern ein eigener Stoerfall.
+
+Mindestens diese Payment-Zustaende muessen unterscheidbar sein:
+
+```text
+payment_started
+provider_authorized
+local_recorded
+receipt_queued
+completed
+failed
+reversal_required
+```
+
+Eine Zahlung gilt erst lokal abgeschlossen, wenn `localMaster` den Payment-Datensatz, den Order-Zustand und die noetigen Audit-/Print-Folgen lokal persistiert hat.
+
+---
+
+## 7. Cloud Relay und Sync
 
 Cloud ist in zwei Aufgaben getrennt.
 
@@ -276,6 +319,8 @@ Sync transportiert Zustand und Historie:
 * Versionsstatus
 
 Sync darf langsam oder periodisch sein.
+
+Cloud-Orders und Cloud-Payments sind fuer Reporting, History, Sync und Remote-Auswertung gedacht. Sie sind Spiegel oder Read Models der lokalen Wahrheit, nicht der operative Master fuer den laufenden Restaurantbetrieb.
 
 ### Relay
 
@@ -299,7 +344,7 @@ failed     = localMaster hat abgelehnt oder Fehler
 
 Wichtig:
 
-Ein Staff-Client darf erst `gebucht` anzeigen, wenn `accepted` vom `localMaster` zurueckkam. Vorher ist der Command pending.
+Ein Staff-Client darf erst `gebucht` anzeigen, wenn `accepted` vom `localMaster` zurueckkam. Vorher ist der Command pending. Das gilt auch dann, wenn die Cloud den Command bereits gespeichert oder an den Tunnel geliefert hat.
 
 Beispiel Command:
 
@@ -321,7 +366,7 @@ Beispiel Command:
 
 ---
 
-## 7. Hybrid-Betrieb fuer grosse Flaechen
+## 8. Hybrid-Betrieb fuer grosse Flaechen
 
 Fast Path:
 
@@ -349,7 +394,7 @@ Fuer sehr grosse Flaechen oder Terrassen ist empfohlen:
 
 ---
 
-## 8. Systembild
+## 9. Systembild
 
 ```text
                               CLOUD
@@ -385,13 +430,14 @@ Staff-App -> relaySyncApi -> localMaster Tunnel -> lokale Realtime Events
 
 ---
 
-## 9. Beispiel: lokale Bestellung
+## 10. Beispiel: lokale Bestellung
 
 ```text
 Staff im WLAN nimmt Bestellung auf
--> Staff-App sendet REST Call an localMaster
+-> Staff-App sendet idempotenten Command/REST Call an localMaster
 -> localMaster validiert Tabelle, Produkte, Preise, Varianten
 -> localMaster speichert Bestellung lokal
+-> localMaster schreibt bestaetigtes Ereignis in die Outbox
 -> localMaster broadcastet TABLE_UPDATED / ORDER_CREATED
 -> POS-Shell und KDS aktualisieren live
 -> Staff-App erhaelt bestaetigte Order
@@ -399,15 +445,16 @@ Staff im WLAN nimmt Bestellung auf
 
 ---
 
-## 10. Beispiel: 5G/Cloud-Relay Bestellung
+## 11. Beispiel: 5G/Cloud-Relay Bestellung
 
 ```text
 Staff-Geraet ist nicht im Restaurant-WLAN
 -> Staff-App sendet ADD_ITEMS_TO_TABLE an relaySyncApi
 -> relaySyncApi speichert Command als pending
 -> relaySyncApi sendet Command ueber offenen Tunnel an localMaster
--> localMaster prueft lokale Struktur und Idempotenz
+-> localMaster prueft lokale Struktur, command_id und Idempotenz
 -> localMaster speichert Order lokal
+-> localMaster schreibt bestaetigtes Ereignis in die Outbox
 -> localMaster broadcastet lokale Realtime Events
 -> localMaster sendet accepted an relaySyncApi
 -> Staff-App sieht gebucht
@@ -422,7 +469,7 @@ Staff-App zeigt nicht gebucht, sondern wartet auf Restaurant
 
 ---
 
-## 11. Lokale Datenverantwortung
+## 12. Lokale Datenverantwortung
 
 | Bereich              | Master                         |
 | -------------------- | ------------------------------ |
@@ -434,16 +481,18 @@ Staff-App zeigt nicht gebucht, sondern wartet auf Restaurant
 | Terminal Pairing     | localMaster / lokale SQLite    |
 | Relay Command Result | localMaster entscheidet final  |
 | Sync Outbox          | localMaster / lokale SQLite    |
+| Sync Inbox           | localMaster / lokale SQLite    |
 | Sync History Cloud   | relaySyncApi / PostgreSQL      |
 | Command Queue Cloud  | relaySyncApi / PostgreSQL      |
 | Produkte MVP         | localMaster lokal              |
 | Produkte spaeter     | Cloud, localMaster pullt       |
 | Staff-Drafts         | Staff-App lokal bis gesendet   |
 | Reporting spaeter    | relaySyncApi / Cloud DB        |
+| Cloud Orders/Payments| Spiegel/Read Model, nicht Master |
 
 ---
 
-## 12. MVP-Reihenfolge
+## 13. MVP-Reihenfolge
 
 ### MVP 1: LocalMaster Core + POS-Shell
 
@@ -455,6 +504,7 @@ Enthaelt:
 * POS-Shell als Tauri/React Client
 * LocalMaster URL und Terminal-Pairing
 * Katalog, Tischplan, Orders, Payments, Cash Close lokal
+* idempotente lokale Commands fuer kritische Aktionen
 * WebSocket Events fuer POS-Refresh
 
 ### MVP 2: Staff/KDS lokal
@@ -468,7 +518,7 @@ Enthaelt:
 * Staff-App als Web/PWA Client
 * Rollenbasierte Sidebar fuer `service`, `kds`, `owner`
 * Service Flow: Tisch auswaehlen, Items buchen
-* KDS Flow: station-basierte Anzeige
+* KDS Flow: station-id-basierte Anzeige
 * lokale Realtime Events
 
 ### MVP 3: Finanz- und Tagesabschluss-Haertung
@@ -481,7 +531,8 @@ Enthaelt:
 * Tagesabschluss
 * Soll/Ist-Vergleich
 * Audit-Metadaten
-* spaeter Z-Bon/Print Queue
+* Payment-Partial-Failure-Handling
+* Z-Bon/Print Queue
 
 ### MVP 4: RelaySyncApi Grundgeruest
 
@@ -513,7 +564,7 @@ Enthaelt:
 
 ---
 
-## 13. Kritische Regeln
+## 14. Kritische Regeln
 
 1. `localMaster` ist die lokale Source of Truth.
 2. Pro Standort gibt es genau einen aktiven `localMaster`.
@@ -523,17 +574,21 @@ Enthaelt:
 6. KDS darf Statusaenderungen senden, aber `localMaster` speichert final.
 7. Ohne Internet muss lokale Kasse weiterlaufen.
 8. Ohne `localMaster` duerfen Clients nur Drafts/Pending Commands haben, keine finalen Verkaeufe.
-9. Relay Commands brauchen eindeutige `command_id` und lokale Idempotenz.
+9. Alle kritischen lokalen Commands brauchen eindeutige `command_id` oder `request_id` und lokale Idempotenz.
 10. Cloud Relay darf keinen lokalen Erfolg vortaeuschen.
 11. Sync transportiert Zustand; Relay transportiert Live Commands mit ACK.
 12. Alle Preise werden als Integer in Rappen/Cents gespeichert.
-13. Order Items speichern Produktname, Preis und Steuer als Snapshot.
+13. Order Items speichern Produktname, Preis, Steuer und Routing-Snapshot.
 14. Druckauftraege laufen ueber Queue, nicht nur Runtime-Events.
-15. Mehrere SQLite-Master pro Standort sind kein Ziel.
+15. Lokale Outbox/Inbox wird persistent in SQLite gespeichert.
+16. Payment Provider Erfolg ohne lokale Speicherung ist ein eigener Stoerfall und muss korrigierbar sein.
+17. Station Routing nutzt stabile `station_id`; Namen sind Anzeige/Snapshot.
+18. Cloud Orders/Payments sind Sync-/Reporting-Spiegel, nicht operative Master-Wahrheit.
+19. Mehrere SQLite-Master pro Standort sind kein Ziel.
 
 ---
 
-## 14. Naechster technischer Schnitt
+## 15. Naechster technischer Schnitt
 
 Kurzfristig:
 

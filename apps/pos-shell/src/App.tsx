@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import type { TableContext } from "./lib/pos-types";
+import { loadPosSettings } from "./lib/local-master-client";
+import type { LocationServiceMode, TableContext } from "./lib/pos-types";
 import { CashRegisterScreen } from "./screens/CashRegisterScreen";
 import { MoreScreen } from "./screens/MoreScreen";
 import { TablePlanScreen } from "./screens/TablePlanScreen";
@@ -8,9 +9,45 @@ import { TablePlanScreen } from "./screens/TablePlanScreen";
 export type PosScreen = "tables" | "cash" | "more" | "logout";
 
 function App() {
-  const [activeScreen, setActiveScreen] = useState<PosScreen>("tables");
+  const [serviceMode, setServiceMode] =
+    useState<LocationServiceMode>("TABLE_SERVICE");
+  const [activeScreen, setActiveScreen] = useState<PosScreen | null>(null);
   const [selectedTableContext, setSelectedTableContext] =
     useState<TableContext | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadStartupSettings() {
+      try {
+        const settingsFile = await loadPosSettings();
+        const nextServiceMode =
+          settingsFile.settings.service_mode ?? "TABLE_SERVICE";
+
+        if (!isMounted) {
+          return;
+        }
+
+        setServiceMode(nextServiceMode);
+        setActiveScreen(
+          nextServiceMode === "COUNTER_SERVICE" ? "cash" : "tables",
+        );
+      } catch (error) {
+        console.warn("Could not load POS service mode.", error);
+
+        if (isMounted) {
+          setServiceMode("TABLE_SERVICE");
+          setActiveScreen("tables");
+        }
+      }
+    }
+
+    void loadStartupSettings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function handleTableSelect(context: TableContext) {
     setSelectedTableContext(context);
@@ -18,12 +55,32 @@ function App() {
   }
 
   function handleNavigate(screen: PosScreen) {
-    if (screen === "cash" && !selectedTableContext) {
+    if (serviceMode === "COUNTER_SERVICE" && screen === "tables") {
+      setSelectedTableContext(null);
+      setActiveScreen("cash");
+      return;
+    }
+
+    if (
+      serviceMode === "TABLE_SERVICE" &&
+      screen === "cash" &&
+      !selectedTableContext
+    ) {
       setActiveScreen("tables");
       return;
     }
 
     setActiveScreen(screen);
+  }
+
+  if (!activeScreen) {
+    return (
+      <main className="flex h-svh touch-manipulation items-center justify-center bg-[#f6f7fb] p-6 text-slate-950">
+        <p className="text-sm font-black uppercase text-slate-400">
+          POS wird geladen.
+        </p>
+      </main>
+    );
   }
 
   if (activeScreen === "tables") {
@@ -38,11 +95,14 @@ function App() {
   if (activeScreen === "cash") {
     return (
       <CashRegisterScreen
+        serviceMode={serviceMode}
         tableContext={selectedTableContext}
         onNavigate={handleNavigate}
         onOrderCreated={() => {
           setSelectedTableContext(null);
-          setActiveScreen("tables");
+          setActiveScreen(
+            serviceMode === "COUNTER_SERVICE" ? "cash" : "tables",
+          );
         }}
       />
     );
@@ -63,7 +123,7 @@ function App() {
         </p>
         <button
           className="h-12 rounded-md bg-slate-950 px-5 text-sm font-black uppercase text-white transition active:scale-[0.98]"
-          onClick={() => setActiveScreen("tables")}
+          onClick={() => handleNavigate("tables")}
         >
           Zur Kasse
         </button>

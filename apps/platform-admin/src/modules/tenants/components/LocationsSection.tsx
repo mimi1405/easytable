@@ -46,6 +46,7 @@ export function LocationsSection({ tenant, selectedLocation, locations, isLoadin
                 <TableHead>Slug</TableHead>
                 <TableHead>Adresse</TableHead>
                 <TableHead>LocalMaster</TableHead>
+                <TableHead>Betrieb</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-24 text-right">Aktionen</TableHead>
               </TableRow>
@@ -63,6 +64,11 @@ export function LocationsSection({ tenant, selectedLocation, locations, isLoadin
                   <TableCell>{location.address ?? "Keine Adresse"}</TableCell>
                   <TableCell className="font-mono text-xs">{location.local_master_instance_id ?? "Nicht gekoppelt"}</TableCell>
                   <TableCell>
+                    <Badge variant={location.service_mode === "COUNTER_SERVICE" ? "default" : "outline"}>
+                      {location.service_mode === "COUNTER_SERVICE" ? "Counterbetrieb" : "Tischbetrieb"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={location.status === "ACTIVE" ? "secondary" : "outline"}>{location.status}</Badge>
                   </TableCell>
                   <TableCell>
@@ -75,7 +81,7 @@ export function LocationsSection({ tenant, selectedLocation, locations, isLoadin
 
               {!isLoading && locations.length === 0 ? (
                 <TableRow>
-                  <TableCell className="h-24 text-center text-muted-foreground" colSpan={6}>
+                  <TableCell className="h-24 text-center text-muted-foreground" colSpan={7}>
                     Keine Locations gefunden.
                   </TableCell>
                 </TableRow>
@@ -83,7 +89,7 @@ export function LocationsSection({ tenant, selectedLocation, locations, isLoadin
 
               {isLoading ? (
                 <TableRow>
-                  <TableCell className="h-24 text-center text-muted-foreground" colSpan={6}>
+                  <TableCell className="h-24 text-center text-muted-foreground" colSpan={7}>
                     Locations werden geladen.
                   </TableCell>
                 </TableRow>

@@ -50,7 +50,7 @@ export type OrderSnapshotResult = {
 
 export type PaymentResult = {
   payment: CompletedMockPayment;
-  table: Table;
+  table: Table | null;
 };
 
 export function listOpenOrders() {
@@ -100,13 +100,14 @@ export function completeMockPayment(request: CompleteMockPaymentRequest): Paymen
   validateMockPaymentRequest(request);
 
   const now = Date.now();
-  const savedOrder = saveTableOrderSnapshot(request, now);
+  const requestTotal = calculateOrderTotals(request.lines).total;
   validateMockPaymentAmounts(
     request.payment_method,
     request.received_cash,
     request.change_given,
-    savedOrder.order.total
+    requestTotal
   );
+  const savedOrder = request.table_context ? saveTableOrderSnapshot(request, now) : saveCounterPaymentOrder(request, now);
 
   savedOrder.order.status = "CLOSED";
   savedOrder.order.payment_status = "PAID";
@@ -142,7 +143,7 @@ export function completeMockPayment(request: CompleteMockPaymentRequest): Paymen
 
   return {
     payment,
-    table: tableFromContext(savedOrder.order.table_context, "FREE")
+    table: savedOrder.order.table_context ? tableFromContext(savedOrder.order.table_context, "FREE") : null
   };
 }
 
@@ -242,6 +243,32 @@ function saveTableOrderSnapshot(
   return { order, continuedExistingOrder: false };
 }
 
+function saveCounterPaymentOrder(
+  request: CompleteMockPaymentRequest,
+  now: number
+): { order: PosOrderSnapshot; continuedExistingOrder: boolean } {
+  const totals = calculateOrderTotals(request.lines);
+  const order: PosOrderSnapshot = {
+    id: scopedId("ord", now, 0),
+    order_number: nextOrderNumber(),
+    table_context: null,
+    lines: cloneBasketLines(request.lines),
+    subtotal: totals.subtotal,
+    tax_total: totals.taxTotal,
+    total: totals.total,
+    status: "OPEN",
+    payment_status: "UNPAID",
+    created_at: now,
+    updated_at: now,
+    closed_at: null
+  };
+
+  posOrders.push(order);
+  persistPosOrders();
+
+  return { order, continuedExistingOrder: false };
+}
+
 function routeOrderOutputsForOrder(order: PosOrderSnapshot) {
   const kdsTicketChanges = rebuildKdsTicketsForOrder(order);
   const printJobChanges = rebuildStationPrintJobsForOrder(order);
@@ -267,8 +294,8 @@ function toCreatedOrderSnapshot(
     tax_total: order.tax_total,
     total: order.total,
     created_at: order.created_at,
-    table_id: order.table_context.table_id,
-    table_name: order.table_context.table_name,
+    table_id: order.table_context?.table_id ?? null,
+    table_name: order.table_context?.table_name ?? null,
     continued_existing_order: continuedExistingOrder
   };
 }
@@ -305,10 +332,6 @@ function validateOrderSnapshotRequest(request: CreateOrderSnapshotRequest) {
 
 function validateMockPaymentRequest(request: CompleteMockPaymentRequest) {
   validateOrderLines(request.lines);
-
-  if (!request.table_context) {
-    throw new Error("Cannot complete a mock payment without table context.");
-  }
 
   if (request.payment_method !== "CASH" && request.payment_method !== "CARD_MANUAL") {
     throw new Error("Unsupported mock payment method.");

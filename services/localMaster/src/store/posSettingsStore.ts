@@ -7,6 +7,7 @@ const posSettings: PosSettingsFile = {
     schema_version: 1,
     tenant_id: tenant.id,
     location_id: location.id,
+    service_mode: "TABLE_SERVICE",
     language: "de-CH",
     business_day_cutover_time: "00:00",
     receipt_printer: {

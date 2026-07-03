@@ -12,6 +12,7 @@ type BasketPanelProps = {
   isSubmitting: boolean;
   bookLabel: string;
   payLabel: string;
+  showBookAction?: boolean;
   onDecreaseLine: (lineId: string) => void;
   onRemoveLine: (lineId: string) => void;
   onCreateOrder: () => void;
@@ -24,6 +25,7 @@ export function BasketPanel({
   isSubmitting,
   bookLabel,
   payLabel,
+  showBookAction = true,
   onDecreaseLine,
   onRemoveLine,
   onCreateOrder,
@@ -90,17 +92,19 @@ export function BasketPanel({
         <span>Total</span>
         <span>{formatChf(total)}</span>
       </div>
-      <div className="grid h-18 shrink-0 grid-cols-2 border-t border-slate-200">
-        <Button
-          className={cn(
-            "h-full rounded-none bg-amber-300 text-base font-black uppercase text-amber-900 transition hover:bg-amber-300 active:bg-amber-400",
-            "disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400",
-          )}
-          disabled={lines.length === 0 || isSubmitting}
-          onClick={onCreateOrder}
-        >
-          {isSubmitting ? "Speichern..." : bookLabel}
-        </Button>
+      <div className={cn("grid h-18 shrink-0 border-t border-slate-200", showBookAction ? "grid-cols-2" : "grid-cols-1")}>
+        {showBookAction ? (
+          <Button
+            className={cn(
+              "h-full rounded-none bg-amber-300 text-base font-black uppercase text-amber-900 transition hover:bg-amber-300 active:bg-amber-400",
+              "disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400",
+            )}
+            disabled={lines.length === 0 || isSubmitting}
+            onClick={onCreateOrder}
+          >
+            {isSubmitting ? "Speichern..." : bookLabel}
+          </Button>
+        ) : null}
         <Button
           className={cn(
             "h-full rounded-none bg-emerald-300 text-base font-black uppercase text-emerald-900 transition hover:bg-emerald-300 active:bg-emerald-400",

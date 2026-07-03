@@ -71,8 +71,8 @@ export function rebuildKdsTicketsForOrder(order: PosOrderSnapshot) {
 
     if (existingTicket) {
       existingTicket.order_number = order.order_number;
-      existingTicket.table_id = order.table_context.table_id;
-      existingTicket.table_name = order.table_context.table_name;
+      existingTicket.table_id = order.table_context?.table_id ?? "counter";
+      existingTicket.table_name = order.table_context?.table_name ?? "Counter";
       existingTicket.items = items;
       existingTicket.updated_at = now;
       existingTicket.done_at = existingTicket.status === "DONE" ? existingTicket.done_at : null;
@@ -82,8 +82,8 @@ export function rebuildKdsTicketsForOrder(order: PosOrderSnapshot) {
         id: ticketId,
         order_id: order.id,
         order_number: order.order_number,
-        table_id: order.table_context.table_id,
-        table_name: order.table_context.table_name,
+        table_id: order.table_context?.table_id ?? "counter",
+        table_name: order.table_context?.table_name ?? "Counter",
         station,
         status: "OPEN",
         items,

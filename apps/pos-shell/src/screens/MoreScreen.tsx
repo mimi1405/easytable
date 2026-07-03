@@ -190,6 +190,14 @@ export function MoreScreen({ onNavigate }: MoreScreenProps) {
                   {settingsFile.settings.language}
                 </span>
               </p>
+              <p>
+                Betrieb{" "}
+                <span className="font-black text-slate-950">
+                  {settingsFile.settings.service_mode === "COUNTER_SERVICE"
+                    ? "Counterbetrieb"
+                    : "Tischbetrieb"}
+                </span>
+              </p>
               <p className="truncate">
                 Datei{" "}
                 <span className="font-black text-slate-950">
