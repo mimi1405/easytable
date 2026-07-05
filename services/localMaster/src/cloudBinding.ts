@@ -4,6 +4,9 @@ import { applyBootstrapOutputStations } from "./catalogStore.js";
 import { getDrizzleDatabase } from "./db/client.js";
 import { localState } from "./db/schema.js";
 import { getLocalMasterIdentity } from "./pairing.js";
+import { pushCatalogToRelay } from "./relayCatalogSync.js";
+import { pushTableLayoutToRelay } from "./relayLayoutSync.js";
+import { pushOperationsToRelay } from "./relayOperationsSync.js";
 import { readLocalSiteConfig, saveLocalSiteConfigFromBootstrap } from "./store/localSiteStore.js";
 import type { CloudBinding, CloudPairRequest, CloudPairResponse, LocalMasterBootstrap } from "./types.js";
 
@@ -38,6 +41,21 @@ export function getCloudBinding(): CloudPairResponse {
   return {
     ...toPublicBinding(binding),
     relay_token_present: Boolean(binding.relay_token)
+  };
+}
+
+export function getRelayRuntimeBinding() {
+  const binding = validateStoredBinding(readStoredBinding());
+  if (binding.status !== "PAIRED" || !binding.relay_base_url || !binding.relay_token) {
+    return null;
+  }
+
+  return {
+    tenant_id: binding.tenant_id,
+    location_id: binding.location_id,
+    local_master_instance_id: binding.local_master_instance_id,
+    relay_base_url: binding.relay_base_url,
+    relay_token: binding.relay_token
   };
 }
 
@@ -184,6 +202,9 @@ async function bootstrapFromRelay(binding: StoredCloudBinding) {
       bootstrap_error: null,
       last_verified_at: now
     });
+    void pushTableLayoutToRelay(binding);
+    void pushCatalogToRelay(binding);
+    void pushOperationsToRelay(binding);
   } catch (error) {
     writeStoredBinding({
       ...binding,

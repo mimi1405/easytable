@@ -6,11 +6,13 @@ import { Card, CardContent } from "@easytable/ui/components/card";
 import { cn } from "@easytable/ui/lib/utils";
 
 import {
-  loadCatalogOutputStations,
-  loadKdsTickets,
+  detectConnectionMode,
+  loadCatalogOutputStationsForConnection,
+  loadKdsTicketsForConnection,
   subscribeLocalMasterEvents,
-  updateKdsTicketStatus,
+  updateKdsTicketStatusForConnection,
   type CatalogOutputStation,
+  type ConnectionMode,
   type KdsTicket,
   type KdsTicketStatus,
 } from "../../lib/local-master";
@@ -37,13 +39,27 @@ export function KdsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [updatingTicketId, setUpdatingTicketId] = useState<string | null>(null);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadStations() {
       try {
-        const outputStations = await loadCatalogOutputStations();
+        const mode = await detectConnectionMode();
+        if (!isMounted) {
+          return;
+        }
+
+        setConnectionMode(mode);
+        if (mode === "OFFLINE") {
+          setStations([]);
+          setSelectedStation("");
+          setNotice("LocalMaster ist nicht erreichbar und Relay ist nicht bereit.");
+          return;
+        }
+
+        const outputStations = await loadCatalogOutputStationsForConnection(mode);
         const kdsStations = outputStations.filter((station) => station.is_active && (station.kind === "KDS" || station.kind === "KDS_AND_PRINTER"));
 
         if (isMounted) {
@@ -73,12 +89,18 @@ export function KdsPage() {
       return;
     }
 
+    if (connectionMode === "OFFLINE") {
+      setTickets([]);
+      setIsLoading(false);
+      return;
+    }
+
     if (showLoadingState) {
       setIsLoading(true);
     }
 
     try {
-      setTickets(await loadKdsTickets(selectedStation));
+      setTickets(await loadKdsTicketsForConnection(connectionMode, selectedStation));
     } catch (error) {
       console.warn("Could not load KDS tickets.", error);
       setNotice("KDS Tickets konnten nicht geladen werden.");
@@ -87,19 +109,35 @@ export function KdsPage() {
         setIsLoading(false);
       }
     }
-  }, [selectedStation]);
+  }, [connectionMode, selectedStation]);
 
   useEffect(() => {
     void loadTickets();
   }, [loadTickets]);
 
   useEffect(() => {
+    if (connectionMode !== "LOCAL") {
+      return undefined;
+    }
+
     return subscribeLocalMasterEvents((event) => {
       if (kdsReloadEvents.has(event.type)) {
         void loadTickets(false);
       }
     });
-  }, [loadTickets]);
+  }, [connectionMode, loadTickets]);
+
+  useEffect(() => {
+    if (connectionMode !== "RELAY" || !selectedStation) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadTickets(false);
+    }, 1_500);
+
+    return () => window.clearInterval(timer);
+  }, [connectionMode, loadTickets, selectedStation]);
 
   const ticketsByStatus = useMemo(() => {
     return columns.reduce<Record<KdsTicketStatus, KdsTicket[]>>(
@@ -120,7 +158,7 @@ export function KdsPage() {
     setNotice(null);
 
     try {
-      const updatedTicket = await updateKdsTicketStatus(ticket.id, status);
+      const updatedTicket = await updateKdsTicketStatusForConnection(connectionMode, ticket.id, status);
       setTickets((current) => current.map((entry) => entry.id === updatedTicket.id ? updatedTicket : entry));
 
       if (status === "DONE") {
@@ -158,7 +196,10 @@ export function KdsPage() {
             </div>
           </div>
 
-          <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <Badge variant={connectionMode === "LOCAL" ? "default" : connectionMode === "RELAY" ? "secondary" : "destructive"} className="h-10 shrink-0 rounded-[2rem] px-3 font-black uppercase">
+              {connectionMode === "LOCAL" ? "Lokal" : connectionMode === "RELAY" ? "Relay" : "Offline"}
+            </Badge>
             {stations.map((station) => (
               <button
                 key={station.id}

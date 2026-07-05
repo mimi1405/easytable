@@ -1,4 +1,4 @@
-import { pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
+import { pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { and, eq, sql } from "drizzle-orm";
 
@@ -170,6 +170,36 @@ export async function listBootstrapUsers(tenantId: string, locationId: string) {
   }));
 }
 
+export async function authenticateLocationUserByPin(tenantId: string, locationId: string, email: string, pin: string) {
+  await requireLocation(tenantId, locationId);
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedPin = pin.trim();
+  const rows = await getLocationUserRows(tenantId, locationId);
+  const row = rows.find(({ user }) => user.email.toLowerCase() === normalizedEmail);
+
+  if (!row || row.user.status !== "ACTIVE" || row.locationUser.isActive !== 1) {
+    throw new ApiError("Invalid staff credentials.", 401);
+  }
+
+  const role = row.tenantUser.role as TenantUserRole;
+  if (role !== "STAFF" && role !== "MANAGER" && role !== "OWNER") {
+    throw new ApiError("User is not allowed to use Staff relay.", 403);
+  }
+
+  if (!row.locationUser.pinHash || !verifySecret(normalizedPin, row.locationUser.pinHash)) {
+    throw new ApiError("Invalid staff credentials.", 401);
+  }
+
+  return {
+    user_id: row.user.id,
+    tenant_id: tenantId,
+    location_id: locationId,
+    email: row.user.email,
+    display_name: row.user.displayName,
+    role,
+  };
+}
+
 async function requireLocationUser(tenantId: string, locationId: string, userId: string) {
   const rows = await getLocationUserRows(tenantId, locationId, userId);
   const row = rows[0];
@@ -293,6 +323,19 @@ function hashSecret(secret: string) {
   const salt = randomBytes(16).toString("hex");
   const hash = pbkdf2Sync(secret, salt, 120_000, 32, "sha256").toString("hex");
   return "pbkdf2_sha256$120000$" + salt + "$" + hash;
+}
+
+function verifySecret(secret: string, storedHash: string) {
+  const [algorithm, iterationsValue, salt, expectedHash] = storedHash.split("$");
+  const iterations = Number(iterationsValue);
+
+  if (algorithm !== "pbkdf2_sha256" || !Number.isInteger(iterations) || !salt || !expectedHash) {
+    return false;
+  }
+
+  const actual = pbkdf2Sync(secret, salt, iterations, 32, "sha256");
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 function toTenantLocationUser(

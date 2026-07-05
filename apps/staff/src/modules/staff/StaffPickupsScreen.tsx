@@ -5,9 +5,11 @@ import { Button } from "@easytable/ui/components/button";
 import { Card, CardContent } from "@easytable/ui/components/card";
 
 import {
-  acknowledgeStationPickup,
-  loadStationPickups,
+  acknowledgeStationPickupForConnection,
+  detectConnectionMode,
+  loadStationPickupsForConnection,
   subscribeLocalMasterEvents,
+  type ConnectionMode,
   type StationPickup,
 } from "../../lib/local-master";
 
@@ -18,6 +20,7 @@ export function StaffPickupsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmittingPickupId, setIsSubmittingPickupId] = useState<string | null>(null);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
 
   const loadPickups = useCallback(async (showLoadingState = true) => {
     if (showLoadingState) {
@@ -25,7 +28,17 @@ export function StaffPickupsScreen() {
     }
 
     try {
-      setPickups(await loadStationPickups("READY"));
+      const mode = await detectConnectionMode();
+      setConnectionMode(mode);
+
+      if (mode === "OFFLINE") {
+        setPickups([]);
+        setNotice("Keine Verbindung zu LocalMaster oder Relay.");
+        return;
+      }
+
+      setPickups(await loadStationPickupsForConnection(mode, "READY"));
+      setNotice(null);
     } catch (error) {
       console.warn("Could not load station pickups.", error);
       setNotice("Abholungen konnten nicht geladen werden.");
@@ -41,6 +54,10 @@ export function StaffPickupsScreen() {
   }, [loadPickups]);
 
   useEffect(() => {
+    if (connectionMode !== "LOCAL") {
+      return undefined;
+    }
+
     return subscribeLocalMasterEvents((event) => {
       if (!pickupReloadEvents.has(event.type)) {
         return;
@@ -52,7 +69,19 @@ export function StaffPickupsScreen() {
 
       void loadPickups(false);
     });
-  }, [loadPickups]);
+  }, [connectionMode, loadPickups]);
+
+  useEffect(() => {
+    if (connectionMode !== "RELAY") {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadPickups(false);
+    }, 3_000);
+
+    return () => window.clearInterval(timer);
+  }, [connectionMode, loadPickups]);
 
   const itemCount = useMemo(
     () => pickups.reduce((total, pickup) => total + pickup.items.reduce((sum, item) => sum + item.quantity, 0), 0),
@@ -68,7 +97,7 @@ export function StaffPickupsScreen() {
     setNotice(null);
 
     try {
-      await acknowledgeStationPickup(pickup.id);
+      await acknowledgeStationPickupForConnection(connectionMode, pickup.id);
       setPickups((current) => current.filter((entry) => entry.id !== pickup.id));
       setNotice(`${pickup.station} · Tisch ${pickup.table_name} abgeholt.`);
     } catch (error) {

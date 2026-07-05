@@ -62,9 +62,11 @@ export async function initializeLocalMasterClient() {
 
       if (identity.instance_id !== storedConfig.localMasterInstanceId) {
         localMasterBlockedReason = "Andere LocalMaster Instanz erkannt. Neu-Kopplung erforderlich.";
+      } else {
+        localMasterBlockedReason = null;
       }
     } catch {
-      localMasterBlockedReason = null;
+      localMasterBlockedReason = "LocalMaster Identitaet konnte nicht verifiziert werden. Verbindung pruefen oder neu koppeln.";
     }
   }
 

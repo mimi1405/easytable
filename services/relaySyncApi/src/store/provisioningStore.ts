@@ -1,11 +1,12 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 
 import { getDrizzleDatabase } from "../db/client.js";
 import { catalogOutputStations, localMasterCredentials, localMasterPairingSessions, locations, relayCommands, tenants } from "../db/schema.js";
 import type {
   CatalogOutputStation,
+  OwnerCatalogSnapshot,
   LocalMasterBootstrap,
   LocalMasterPairRequest,
   LocalMasterPairResponse,
@@ -18,6 +19,7 @@ import { ApiError } from "./errors.js";
 import { listBootstrapUsers } from "./userStore.js";
 
 const pairingTtlMs = 10 * 60 * 1000;
+const relayRedeliveryTimeoutMs = Number(process.env.RELAY_COMMAND_REDELIVERY_TIMEOUT_MS ?? 30_000);
 
 type PairingSessionRow = typeof localMasterPairingSessions.$inferSelect;
 type CredentialRow = typeof localMasterCredentials.$inferSelect;
@@ -213,6 +215,7 @@ export async function pairLocalMaster(request: LocalMasterPairRequest): Promise<
 export async function listPendingRelayCommands(relayToken: string): Promise<RelayCommand[]> {
   const credential = await requireLocalMasterCredential(relayToken);
   const now = new Date();
+  const redeliverBefore = new Date(now.getTime() - Math.max(5_000, relayRedeliveryTimeoutMs));
   const rows = await getDrizzleDatabase()
     .update(relayCommands)
     .set({ status: "delivered", deliveredAt: now, updatedAt: now })
@@ -220,7 +223,10 @@ export async function listPendingRelayCommands(relayToken: string): Promise<Rela
       eq(relayCommands.tenantId, credential.tenantId),
       eq(relayCommands.locationId, credential.locationId),
       eq(relayCommands.localMasterInstanceId, credential.localMasterInstanceId),
-      eq(relayCommands.status, "pending")
+      or(
+        eq(relayCommands.status, "pending"),
+        and(eq(relayCommands.status, "delivered"), lt(relayCommands.deliveredAt, redeliverBefore))
+      )
     ))
     .returning();
 
@@ -235,9 +241,33 @@ export async function ackRelayCommand(
   const credential = await requireLocalMasterCredential(relayToken);
   const status = normalizeAckStatus(request.status);
   const now = new Date();
+  const commandRow = (await getDrizzleDatabase()
+    .select()
+    .from(relayCommands)
+    .where(and(
+      eq(relayCommands.id, commandId),
+      eq(relayCommands.tenantId, credential.tenantId),
+      eq(relayCommands.locationId, credential.locationId),
+      eq(relayCommands.localMasterInstanceId, credential.localMasterInstanceId),
+      eq(relayCommands.status, "delivered")
+    ))
+    .limit(1))[0];
+
+  if (!commandRow) {
+    throw new ApiError("Relay command not found for this LocalMaster or not delivered.", 404);
+  }
+
+  if (status === "accepted" && commandRow.type.startsWith("OWNER_CATALOG_")) {
+    const catalogSnapshot = extractCatalogSnapshot(request.result);
+    if (catalogSnapshot) {
+      const { replaceLocalMasterCatalog } = await import("./catalogRelayStore.js");
+      await replaceLocalMasterCatalog(relayToken, catalogSnapshot);
+    }
+  }
+
   const result = status === "failed"
     ? { error: request.error ?? "Relay command failed.", result: request.result ?? null }
-    : request.result ?? null;
+    : unwrapAckResult(request.result);
   const rows = await getDrizzleDatabase()
     .update(relayCommands)
     .set({
@@ -254,10 +284,6 @@ export async function ackRelayCommand(
       eq(relayCommands.status, "delivered")
     ))
     .returning();
-
-  if (!rows[0]) {
-    throw new ApiError("Relay command not found for this LocalMaster or not delivered.", 404);
-  }
 
   return toRelayCommand(rows[0]);
 }
@@ -313,7 +339,7 @@ export async function getLocalMasterBootstrap(relayToken: string): Promise<Local
   };
 }
 
-async function requireLocalMasterCredential(relayToken: string): Promise<CredentialRow> {
+export async function requireLocalMasterCredential(relayToken: string): Promise<CredentialRow> {
   const digest = hashSecret(relayToken);
   const rows = await getDrizzleDatabase()
     .select()
@@ -480,4 +506,25 @@ function normalizeAckStatus(value: string) {
   }
 
   return value;
+}
+
+function extractCatalogSnapshot(result: unknown): OwnerCatalogSnapshot | null {
+  if (!result || typeof result !== "object" || !("catalog_snapshot" in result)) {
+    return null;
+  }
+
+  const snapshot = (result as { catalog_snapshot?: unknown }).catalog_snapshot;
+  if (!snapshot || typeof snapshot !== "object") {
+    return null;
+  }
+
+  return snapshot as OwnerCatalogSnapshot;
+}
+
+function unwrapAckResult(result: unknown) {
+  if (result && typeof result === "object" && "entity" in result) {
+    return (result as { entity?: unknown }).entity ?? null;
+  }
+
+  return result ?? null;
 }

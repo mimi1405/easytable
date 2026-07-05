@@ -97,22 +97,70 @@ export const localMasterCredentials = pgTable("local_master_credentials", {
   index("idx_local_master_credentials_instance").on(table.tenantId, table.locationId, table.localMasterInstanceId, table.revokedAt),
 ]);
 
-export const catalogCategories = pgTable("catalog_categories", {
+export const layoutFloors = pgTable("layout_floors", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").notNull().references(() => locations.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   sortOrder: integer("sort_order").notNull(),
   ...timestamps,
-}, (table) => [index("idx_catalog_categories_tenant").on(table.tenantId, table.sortOrder)]);
+}, (table) => [
+  index("idx_layout_floors_location").on(table.tenantId, table.locationId, table.sortOrder, table.name),
+  uniqueIndex("idx_layout_floors_location_name").on(table.tenantId, table.locationId, table.name),
+]);
+
+export const layoutAreas = pgTable("layout_areas", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").notNull().references(() => locations.id, { onDelete: "cascade" }),
+  floorId: text("floor_id").notNull().references(() => layoutFloors.id, { onDelete: "restrict" }),
+  name: text("name").notNull(),
+  sortOrder: integer("sort_order").notNull(),
+  ...timestamps,
+}, (table) => [
+  index("idx_layout_areas_floor").on(table.tenantId, table.locationId, table.floorId, table.sortOrder, table.name),
+  uniqueIndex("idx_layout_areas_floor_name").on(table.tenantId, table.locationId, table.floorId, table.name),
+]);
+
+export const layoutTables = pgTable("layout_tables", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").notNull().references(() => locations.id, { onDelete: "cascade" }),
+  areaId: text("area_id").notNull().references(() => layoutAreas.id, { onDelete: "restrict" }),
+  name: text("name").notNull(),
+  seats: integer("seats").notNull(),
+  sortOrder: integer("sort_order").notNull(),
+  ...timestamps,
+}, (table) => [
+  index("idx_layout_tables_area").on(table.tenantId, table.locationId, table.areaId, table.sortOrder, table.name),
+  uniqueIndex("idx_layout_tables_area_name").on(table.tenantId, table.locationId, table.areaId, table.name),
+]);
+
+export const catalogCategories = pgTable("catalog_categories", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").references(() => locations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  sortOrder: integer("sort_order").notNull(),
+  defaultStationId: text("default_station_id"),
+  ...timestamps,
+}, (table) => [
+  index("idx_catalog_categories_tenant").on(table.tenantId, table.sortOrder),
+  index("idx_catalog_categories_location").on(table.tenantId, table.locationId, table.sortOrder),
+]);
 
 export const catalogTaxes = pgTable("catalog_taxes", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").references(() => locations.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   rateBps: integer("rate_bps").notNull(),
   sortOrder: integer("sort_order").notNull(),
   ...timestamps,
-}, (table) => [index("idx_catalog_taxes_tenant").on(table.tenantId, table.sortOrder)]);
+}, (table) => [
+  index("idx_catalog_taxes_tenant").on(table.tenantId, table.sortOrder),
+  index("idx_catalog_taxes_location").on(table.tenantId, table.locationId, table.sortOrder),
+]);
 
 export const catalogOutputStations = pgTable("catalog_output_stations", {
   id: text("id").primaryKey(),
@@ -133,6 +181,7 @@ export const catalogOutputStations = pgTable("catalog_output_stations", {
 export const catalogProducts = pgTable("catalog_products", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").references(() => locations.id, { onDelete: "cascade" }),
   categoryId: text("category_id").notNull(),
   taxId: text("tax_id"),
   productType: text("product_type").notNull(),
@@ -147,6 +196,7 @@ export const catalogProducts = pgTable("catalog_products", {
 }, (table) => [
   index("idx_catalog_products_tenant_category").on(table.tenantId, table.categoryId, table.name),
   index("idx_catalog_products_tenant_station").on(table.tenantId, table.stationId, table.productType),
+  index("idx_catalog_products_location_category").on(table.tenantId, table.locationId, table.categoryId, table.name),
 ]);
 
 export const orders = pgTable("orders", {
@@ -186,6 +236,41 @@ export const orderItems = pgTable("order_items", {
   notes: text("notes"),
   ...timestamps,
 }, (table) => [index("idx_order_items_order").on(table.tenantId, table.orderId)]);
+
+export const stationPickups = pgTable("station_pickups", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").notNull(),
+  orderId: text("order_id").notNull(),
+  orderNumber: text("order_number").notNull(),
+  tableId: text("table_id").notNull(),
+  tableName: text("table_name").notNull(),
+  station: text("station").notNull(),
+  status: text("status").notNull(),
+  itemsJson: jsonb("items_json").notNull(),
+  readyAt: timestamp("ready_at", { withTimezone: true }).notNull(),
+  acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+  ...timestamps,
+}, (table) => [
+  index("idx_station_pickups_location_status").on(table.tenantId, table.locationId, table.status, table.readyAt),
+]);
+
+export const kdsTickets = pgTable("kds_tickets", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  locationId: text("location_id").notNull(),
+  orderId: text("order_id").notNull(),
+  orderNumber: text("order_number").notNull(),
+  tableId: text("table_id").notNull(),
+  tableName: text("table_name").notNull(),
+  station: text("station").notNull(),
+  status: text("status").notNull(),
+  itemsJson: jsonb("items_json").notNull(),
+  doneAt: timestamp("done_at", { withTimezone: true }),
+  ...timestamps,
+}, (table) => [
+  index("idx_kds_tickets_location_station").on(table.tenantId, table.locationId, table.station, table.status, table.createdAt),
+]);
 
 export const payments = pgTable("payments", {
   id: text("id").primaryKey(),

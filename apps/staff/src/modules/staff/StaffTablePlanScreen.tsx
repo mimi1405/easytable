@@ -6,8 +6,10 @@ import { cn } from "@easytable/ui/lib/utils";
 
 import type { StaffTableContext } from "../../layout/navigation";
 import {
-  loadTableLayout,
+  detectConnectionMode,
+  loadTableLayoutForConnection,
   subscribeLocalMasterEvents,
+  type ConnectionMode,
   type TableLayout,
   type TableLayoutArea,
   type TableLayoutFloor,
@@ -19,7 +21,7 @@ type StaffTablePlanScreenProps = {
   onSelectTable: (tableContext: StaffTableContext) => void;
 };
 
-const tablePlanReloadEvents = new Set(["ORDER_CREATED", "TABLE_UPDATED"]);
+const tablePlanReloadEvents = new Set(["ORDER_CREATED", "TABLE_UPDATED", "TABLE_LAYOUT_UPDATED"]);
 
 export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProps) {
   const [layout, setLayout] = useState<TableLayout | null>(null);
@@ -27,6 +29,7 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
   const [activeAreaId, setActiveAreaId] = useState("");
   const [isLoadingLayout, setIsLoadingLayout] = useState(true);
   const [layoutNotice, setLayoutNotice] = useState<string | null>(null);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
 
   const loadLayout = useCallback(async (showLoadingState = true) => {
     if (showLoadingState) {
@@ -36,7 +39,9 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
     setLayoutNotice(null);
 
     try {
-      const tableLayout = await loadTableLayout();
+      const mode = await detectConnectionMode();
+      setConnectionMode(mode);
+      const tableLayout = await loadTableLayoutForConnection(mode);
       const firstFloor = tableLayout.floors[0];
       const firstArea = firstFloor?.areas[0];
 
@@ -54,11 +59,11 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
           : firstArea?.id ?? "";
       });
     } catch (error) {
-      console.warn("Could not load table layout from Local Master.", error);
+      console.warn("Could not load table layout.", error);
       setLayout(null);
       setActiveFloorId("");
       setActiveAreaId("");
-      setLayoutNotice("Tischplan konnte nicht geladen werden.");
+      setLayoutNotice(error instanceof Error ? error.message : "Tischplan konnte nicht geladen werden.");
     } finally {
       if (showLoadingState) {
         setIsLoadingLayout(false);
@@ -71,12 +76,28 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
   }, [loadLayout]);
 
   useEffect(() => {
+    if (connectionMode !== "LOCAL") {
+      return undefined;
+    }
+
     return subscribeLocalMasterEvents((event) => {
       if (tablePlanReloadEvents.has(event.type)) {
         void loadLayout(false);
       }
     });
-  }, [loadLayout]);
+  }, [connectionMode, loadLayout]);
+
+  useEffect(() => {
+    if (connectionMode !== "RELAY") {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadLayout(false);
+    }, 3_000);
+
+    return () => window.clearInterval(timer);
+  }, [connectionMode, loadLayout]);
 
   const activeFloor = useMemo<TableLayoutFloor | undefined>(
     () => layout?.floors.find((floor) => floor.id === activeFloorId),
@@ -112,22 +133,37 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
 
   return (
     <section className="mx-auto flex h-[calc(100svh-6.5rem)] max-w-5xl touch-manipulation flex-col overflow-hidden rounded-md border bg-[#f7f8fc] text-slate-950 shadow-sm">
-      <div className="flex h-14 shrink-0 items-center gap-2 overflow-x-auto border-b border-slate-200 px-3 [scrollbar-width:none] sm:px-4 [&::-webkit-scrollbar]:hidden">
-        {layout?.floors.map((floor) => (
-          <Button
-            key={floor.id}
-            variant={floor.id === activeFloorId ? "default" : "secondary"}
-            className={cn(
-              "h-10 shrink-0 rounded-[2rem] px-4 text-sm font-extrabold uppercase tracking-normal transition active:scale-[0.98]",
-              floor.id === activeFloorId
-                ? "bg-slate-950 text-white shadow-lg shadow-slate-900/20 hover:bg-slate-950"
-                : "bg-slate-100 text-slate-500 hover:bg-slate-200",
-            )}
-            onClick={() => handleFloorSelect(floor)}
-          >
-            {floor.name}
-          </Button>
-        ))}
+      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 px-3 sm:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {layout?.floors.map((floor) => (
+            <Button
+              key={floor.id}
+              variant={floor.id === activeFloorId ? "default" : "secondary"}
+              className={cn(
+                "h-10 shrink-0 rounded-[2rem] px-4 text-sm font-extrabold uppercase tracking-normal transition active:scale-[0.98]",
+                floor.id === activeFloorId
+                  ? "bg-slate-950 text-white shadow-lg shadow-slate-900/20 hover:bg-slate-950"
+                  : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+              )}
+              onClick={() => handleFloorSelect(floor)}
+            >
+              {floor.name}
+            </Button>
+          ))}
+        </div>
+        <Badge
+          variant="secondary"
+          className={cn(
+            "h-8 shrink-0 rounded-[2rem] px-3 text-[0.7rem] font-black uppercase",
+            connectionMode === "LOCAL"
+              ? "bg-emerald-50 text-emerald-700"
+              : connectionMode === "RELAY"
+                ? "bg-sky-50 text-sky-700"
+                : "bg-rose-50 text-rose-700",
+          )}
+        >
+          {connectionMode === "LOCAL" ? "Lokal" : connectionMode === "RELAY" ? "Relay" : "Offline"}
+        </Badge>
       </div>
 
       <div className="flex h-14 shrink-0 items-center gap-2 overflow-x-auto border-b border-slate-200 px-3 [scrollbar-width:none] sm:px-4 [&::-webkit-scrollbar]:hidden">

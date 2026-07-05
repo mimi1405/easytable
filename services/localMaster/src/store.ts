@@ -25,8 +25,18 @@ export {
 } from "./store/kdsStore.js";
 
 export {
+  createLayoutArea,
+  createLayoutFloor,
+  createLayoutTable,
+  deleteLayoutArea,
+  deleteLayoutFloor,
+  deleteLayoutTable,
   getTableLayout,
-  listTables
+  listOwnerLocations,
+  listTables,
+  updateLayoutArea,
+  updateLayoutFloor,
+  updateLayoutTable
 } from "./store/tableStore.js";
 
 export {

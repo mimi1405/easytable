@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 
+import { getRelayRuntimeBinding } from "../cloudBinding.js";
 import { broadcast } from "../realtime.js";
+import { pushOperationsToRelay } from "../relayOperationsSync.js";
 import { updateKdsTicketStatusSchema } from "../schemas.js";
 import { listKdsTickets, updateKdsTicketStatus } from "../store.js";
 import type { UpdateKdsTicketStatusRequest } from "../types.js";
@@ -23,7 +25,16 @@ export async function registerKdsRoutes(app: FastifyInstance) {
         broadcast("STATION_PICKUP_READY", { pickup });
       }
 
+      await pushOperationsToRelayIfPaired();
+
       return ticket;
     }
   );
+}
+
+async function pushOperationsToRelayIfPaired() {
+  const binding = getRelayRuntimeBinding();
+  if (binding) {
+    await pushOperationsToRelay(binding);
+  }
 }

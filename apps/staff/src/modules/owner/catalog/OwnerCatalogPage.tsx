@@ -4,27 +4,16 @@ import { WifiOff } from "lucide-react";
 import { Button } from "@easytable/ui/components/button";
 
 import {
-  createCatalogCategory,
-  createCatalogProduct,
-  createCatalogTax,
-  deleteCatalogCategory,
-  deleteCatalogProduct,
-  deleteCatalogTax,
-  duplicateCatalogCategory,
-  duplicateCatalogProduct,
-  duplicateCatalogTax,
+  detectConnectionMode,
   getLocalMasterUrl,
-  loadCatalog,
-  loadCatalogCategories,
-  loadCatalogOutputStations,
-  loadCatalogTaxes,
-  updateCatalogCategory,
-  updateCatalogProduct,
-  updateCatalogTax,
+  getRelaySyncUrl,
+  loadOwnerCatalogForConnection,
+  runOwnerCatalogActionForConnection,
   type CatalogCategory,
   type CatalogOutputStation,
   type CatalogProduct,
   type CatalogTax,
+  type ConnectionMode,
 } from "../../../lib/local-master";
 import type { OwnerCatalogSection } from "../../../layout/navigation";
 import { CategoriesView } from "./CategoriesView";
@@ -42,22 +31,20 @@ export function OwnerCatalogPage({ section }: OwnerCatalogPageProps) {
   const [taxes, setTaxes] = useState<CatalogTax[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
 
   async function refreshCatalog() {
     setIsLoading(true);
     setError(null);
 
     try {
-      const [nextProducts, nextCategories, nextTaxes, nextOutputStations] = await Promise.all([
-        loadCatalog(),
-        loadCatalogCategories(),
-        loadCatalogTaxes(),
-        loadCatalogOutputStations(),
-      ]);
-      setProducts(nextProducts);
-      setCategories(nextCategories);
-      setTaxes(nextTaxes);
-      setOutputStations(nextOutputStations);
+      const nextMode = await detectConnectionMode();
+      setConnectionMode(nextMode);
+      const snapshot = await loadOwnerCatalogForConnection(nextMode);
+      setProducts(snapshot.products);
+      setCategories(snapshot.categories);
+      setTaxes(snapshot.taxes);
+      setOutputStations(snapshot.output_stations);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Katalog konnte nicht geladen werden.");
     } finally {
@@ -65,11 +52,11 @@ export function OwnerCatalogPage({ section }: OwnerCatalogPageProps) {
     }
   }
 
-  async function runAction(action: () => Promise<void>) {
+  async function runAction(action: string, payload: unknown) {
     setError(null);
 
     try {
-      await action();
+      await runOwnerCatalogActionForConnection(connectionMode, action, payload);
       await refreshCatalog();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Aktion fehlgeschlagen.");
@@ -89,7 +76,7 @@ export function OwnerCatalogPage({ section }: OwnerCatalogPageProps) {
           <h2 className="text-2xl font-semibold tracking-normal">{sectionTitle(section)}</h2>
         </div>
         <span className="max-w-full truncate rounded-md border bg-muted px-3 py-2 text-xs font-medium text-muted-foreground">
-          {getLocalMasterUrl()}
+          {connectionMode === "RELAY" ? getRelaySyncUrl() : getLocalMasterUrl()}
         </span>
       </section>
 
@@ -99,11 +86,11 @@ export function OwnerCatalogPage({ section }: OwnerCatalogPageProps) {
         <ProductsView
           categories={categories}
           isLoading={isLoading}
-          onCreate={(input) => runAction(async () => void (await createCatalogProduct(input)))}
-          onDelete={(productId) => runAction(async () => void (await deleteCatalogProduct(productId)))}
-          onDuplicate={(productId) => runAction(async () => void (await duplicateCatalogProduct(productId)))}
+          onCreate={(input) => runAction("OWNER_CATALOG_PRODUCT_CREATE", input)}
+          onDelete={(productId) => runAction("OWNER_CATALOG_PRODUCT_DELETE", { product_id: productId })}
+          onDuplicate={(productId) => runAction("OWNER_CATALOG_PRODUCT_DUPLICATE", { product_id: productId })}
           onReload={refreshCatalog}
-          onUpdate={(productId, input) => runAction(async () => void (await updateCatalogProduct(productId, input)))}
+          onUpdate={(productId, input) => runAction("OWNER_CATALOG_PRODUCT_UPDATE", { product_id: productId, input })}
           outputStations={outputStations}
           products={products}
           taxes={taxes}
@@ -112,21 +99,21 @@ export function OwnerCatalogPage({ section }: OwnerCatalogPageProps) {
         <CategoriesView
           categories={categories}
           isLoading={isLoading}
-          onCreate={(input) => runAction(async () => void (await createCatalogCategory(input)))}
-          onDelete={(categoryId) => runAction(async () => void (await deleteCatalogCategory(categoryId)))}
-          onDuplicate={(categoryId) => runAction(async () => void (await duplicateCatalogCategory(categoryId)))}
+          onCreate={(input) => runAction("OWNER_CATALOG_CATEGORY_CREATE", input)}
+          onDelete={(categoryId) => runAction("OWNER_CATALOG_CATEGORY_DELETE", { category_id: categoryId })}
+          onDuplicate={(categoryId) => runAction("OWNER_CATALOG_CATEGORY_DUPLICATE", { category_id: categoryId })}
           onReload={refreshCatalog}
-          onUpdate={(categoryId, input) => runAction(async () => void (await updateCatalogCategory(categoryId, input)))}
+          onUpdate={(categoryId, input) => runAction("OWNER_CATALOG_CATEGORY_UPDATE", { category_id: categoryId, input })}
           outputStations={outputStations}
         />
       ) : (
         <TaxView
           isLoading={isLoading}
-          onCreate={(input) => runAction(async () => void (await createCatalogTax(input)))}
-          onDelete={(taxId) => runAction(async () => void (await deleteCatalogTax(taxId)))}
-          onDuplicate={(taxId) => runAction(async () => void (await duplicateCatalogTax(taxId)))}
+          onCreate={(input) => runAction("OWNER_CATALOG_TAX_CREATE", input)}
+          onDelete={(taxId) => runAction("OWNER_CATALOG_TAX_DELETE", { tax_id: taxId })}
+          onDuplicate={(taxId) => runAction("OWNER_CATALOG_TAX_DUPLICATE", { tax_id: taxId })}
           onReload={refreshCatalog}
-          onUpdate={(taxId, input) => runAction(async () => void (await updateCatalogTax(taxId, input)))}
+          onUpdate={(taxId, input) => runAction("OWNER_CATALOG_TAX_UPDATE", { tax_id: taxId, input })}
           taxes={taxes}
         />
       )}

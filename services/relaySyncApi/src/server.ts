@@ -5,6 +5,8 @@ import { closeDatabase, initializeDatabase } from "./db/client.js";
 import { registerAdminRoutes } from "./routes/adminRoutes.js";
 import { registerHealthRoutes } from "./routes/healthRoutes.js";
 import { registerLocalMasterRoutes } from "./routes/localMasterRoutes.js";
+import { registerOwnerRoutes } from "./routes/ownerRoutes.js";
+import { registerStaffRoutes } from "./routes/staffRoutes.js";
 import { ApiError } from "./store/errors.js";
 
 export async function buildServer() {
@@ -28,6 +30,8 @@ export async function buildServer() {
   await app.register(registerHealthRoutes);
   await app.register(registerAdminRoutes);
   await app.register(registerLocalMasterRoutes);
+  await app.register(registerStaffRoutes);
+  await app.register(registerOwnerRoutes);
 
   app.addHook("onClose", async () => {
     await closeDatabase();

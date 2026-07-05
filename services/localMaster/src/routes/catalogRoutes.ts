@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 
+import { getRelayRuntimeBinding } from "../cloudBinding.js";
 import { broadcast } from "../realtime.js";
+import { pushCatalogToRelay } from "../relayCatalogSync.js";
 import {
   createCatalogCategory,
   createCatalogProduct,
@@ -133,4 +135,8 @@ export async function registerCatalogRoutes(app: FastifyInstance) {
 
 function broadcastCatalogUpdated(action: string, entity: unknown) {
   broadcast("CATALOG_UPDATED", { action, entity });
+  const binding = getRelayRuntimeBinding();
+  if (binding) {
+    void pushCatalogToRelay(binding);
+  }
 }

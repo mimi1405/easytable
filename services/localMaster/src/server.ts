@@ -24,7 +24,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   await app.register(cors, {
     origin: true,
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type"]
+    allowedHeaders: ["Authorization", "Content-Type"]
   });
 
   await app.register(websocket, {

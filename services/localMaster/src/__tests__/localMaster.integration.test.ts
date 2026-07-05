@@ -15,7 +15,8 @@ import type {
   Order,
   PrintJob,
   SavedDayClose,
-  TableContext
+  TableContext,
+  TableLayout
 } from "../types.js";
 import type { PosOrderSnapshot } from "../store/storeState.js";
 
@@ -357,6 +358,112 @@ test("day close preview counts legacy completed and lifecycle completed payments
   assert.equal(after.expected_total - before.expected_total, 1755);
 });
 
+test("table layout is seeded into local SQLite and served through legacy endpoint", async () => {
+  const response = await app.inject({ method: "GET", url: "/api/table-layout" });
+  const layout = response.json<TableLayout>();
+
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(layout.location.id, "loc_basilica_main");
+  assert.equal(layout.floors.length >= 2, true);
+  assert.equal(layout.floors.some((floor) => floor.areas.some((area) => area.tables.length > 0)), true);
+});
+
+test("owner location layout CRUD updates persisted table layout", async () => {
+  const locations = await getOwnerLocations();
+  const locationId = locations[0]?.id ?? "";
+
+  assert.equal(locationId, "loc_basilica_main");
+
+  const floor = await writeDirect<{ id: string; name: string; sort_order: number }>(
+    "POST",
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/floors",
+    { name: "Terrasse Test", sort_order: 90 },
+    201
+  );
+  const renamedFloor = await writeDirect<{ id: string; name: string; sort_order: number }>(
+    "PATCH",
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/floors/" + encodeURIComponent(floor.id),
+    { name: "Terrasse Test 2", sort_order: 91 },
+    200
+  );
+  const area = await writeDirect<{ id: string; name: string; sort_order: number }>(
+    "POST",
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/areas",
+    { floor_id: floor.id, name: "Aussen", sort_order: 10 },
+    201
+  );
+  const table = await writeDirect<{ id: string; name: string; seats: number; sort_order: number }>(
+    "POST",
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/tables",
+    { area_id: area.id, name: "99", seats: 4, sort_order: 10 },
+    201
+  );
+  const renamedTable = await writeDirect<{ id: string; name: string; seats: number; sort_order: number }>(
+    "PATCH",
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/tables/" + encodeURIComponent(table.id),
+    { name: "99A", seats: 6 },
+    200
+  );
+  const layout = await getOwnerTableLayout(locationId);
+
+  assert.equal(renamedFloor.name, "Terrasse Test 2");
+  assert.equal(renamedTable.name, "99A");
+  assert.equal(renamedTable.seats, 6);
+  assert.equal(layout.floors.some((entry) => entry.id === floor.id), true);
+  assert.equal(layout.floors.some((entry) => entry.areas.some((item) => item.id === area.id)), true);
+  assert.equal(layout.floors.some((entry) => entry.areas.some((item) => item.tables.some((candidate) => candidate.id === table.id))), true);
+
+  await writeDirect("DELETE", "/api/owner/locations/" + encodeURIComponent(locationId) + "/tables/" + encodeURIComponent(table.id), undefined, 204);
+  await writeDirect("DELETE", "/api/owner/locations/" + encodeURIComponent(locationId) + "/areas/" + encodeURIComponent(area.id), undefined, 204);
+  await writeDirect("DELETE", "/api/owner/locations/" + encodeURIComponent(locationId) + "/floors/" + encodeURIComponent(floor.id), undefined, 204);
+});
+
+test("owner layout mutations reject foreign locations", async () => {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/owner/locations/other_location/floors",
+    payload: { name: "Wrong Location" }
+  });
+
+  assert.equal(response.statusCode, 403, response.body);
+  assert.equal(response.json<{ error: string }>().error, "Location is not managed by this Local Master.");
+});
+
+test("owner table delete rejects tables with open orders", async () => {
+  const locations = await getOwnerLocations();
+  const locationId = locations[0]?.id ?? "";
+  const layout = await getOwnerTableLayout(locationId);
+  const floor = layout.floors[0];
+  const area = floor?.areas[0];
+  const table = area?.tables[0];
+
+  assert.ok(floor);
+  assert.ok(area);
+  assert.ok(table);
+
+  pushStaffOrder("staff_order_table_delete_guard", {
+    tenant_id: layout.tenant.id,
+    location_id: layout.location.id,
+    floor_id: floor.id,
+    area_id: area.id,
+    table_id: table.id,
+    table_name: table.name,
+    area_name: area.name,
+    floor_name: floor.name,
+    seats: table.seats
+  }, [
+    { productId: "prod_delete_guard", productName: "Delete Guard", unitPrice: 500, quantity: 1 }
+  ]);
+
+  const response = await app.inject({
+    method: "DELETE",
+    url: "/api/owner/locations/" + encodeURIComponent(locationId) + "/tables/" + encodeURIComponent(table.id)
+  });
+
+  assert.equal(response.statusCode, 409, response.body);
+  assert.equal(response.json<{ error: string }>().error, "Table has an open order.");
+});
+
 async function postJson<T>(url: string, request: unknown, expectedStatus: number): Promise<T> {
   const response = await app.inject({
     method: "POST",
@@ -366,6 +473,32 @@ async function postJson<T>(url: string, request: unknown, expectedStatus: number
 
   assert.equal(response.statusCode, expectedStatus, response.body);
   return response.json<T>();
+}
+
+async function writeDirect<T>(method: "POST" | "PATCH" | "DELETE", url: string, payload: object | undefined, expectedStatus: number): Promise<T> {
+  const response = payload === undefined
+    ? await app.inject({ method, url })
+    : await app.inject({ method, url, payload });
+
+  assert.equal(response.statusCode, expectedStatus, response.body);
+  return response.statusCode === 204 ? (undefined as T) : response.json<T>();
+}
+
+async function getOwnerLocations() {
+  const response = await app.inject({ method: "GET", url: "/api/owner/locations" });
+
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json<{ data: Array<{ id: string; tenant_id: string; name: string }> }>().data;
+}
+
+async function getOwnerTableLayout(locationId: string) {
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/owner/locations/" + encodeURIComponent(locationId) + "/table-layout"
+  });
+
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json<TableLayout>();
 }
 
 async function getOpenOrders() {

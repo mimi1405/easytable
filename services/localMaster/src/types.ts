@@ -246,6 +246,36 @@ export type TableLayoutTable = {
   open_order_count: number;
 };
 
+export type OwnerLocation = {
+  id: string;
+  tenant_id: string;
+  name: string;
+};
+
+export type LayoutFloorCreateRequest = {
+  name: string;
+  sort_order?: number;
+};
+
+export type LayoutFloorUpdateRequest = Partial<LayoutFloorCreateRequest>;
+
+export type LayoutAreaCreateRequest = {
+  floor_id: string;
+  name: string;
+  sort_order?: number;
+};
+
+export type LayoutAreaUpdateRequest = Partial<LayoutAreaCreateRequest>;
+
+export type LayoutTableCreateRequest = {
+  area_id: string;
+  name: string;
+  seats: number;
+  sort_order?: number;
+};
+
+export type LayoutTableUpdateRequest = Partial<LayoutTableCreateRequest>;
+
 export type BasketLineVariant = {
   variant_group_id: string;
   variant_group_name: string;
@@ -676,7 +706,8 @@ export type RealtimeEventType =
   | "PRINT_LOG_CREATED"
   | "STATION_PICKUP_READY"
   | "STATION_PICKUP_ACKNOWLEDGED"
-  | "TABLE_UPDATED";
+  | "TABLE_UPDATED"
+  | "TABLE_LAYOUT_UPDATED";
 
 export type RealtimeEvent = {
   id: string;

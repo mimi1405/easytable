@@ -155,6 +155,219 @@ export type RelayCommandAckRequest = {
   error?: string | null;
 };
 
+export type StaffLoginRequest = {
+  tenant_id: string;
+  location_id: string;
+  email: string;
+  pin: string;
+};
+
+export type StaffLoginResponse = {
+  access_token: string;
+  tenant_id: string;
+  location_id: string;
+  user_id: string;
+  display_name: string;
+  role: TenantUserRole;
+  expires_at: string;
+};
+
+export type StaffOrderSnapshotRelayRequest = {
+  request_id: string;
+  lines: unknown[];
+  table_context: unknown;
+};
+
+export type StaffRelayCommandResponse = RelayCommand & {
+  poll_url: string;
+};
+
+export type BasketLineVariant = {
+  variant_group_id: string;
+  variant_group_name: string;
+  variant_item_id: string;
+  variant_item_name: string;
+  price_delta: number;
+};
+
+export type BasketLine = {
+  id: string;
+  product_id: string;
+  product_type: CatalogProductType;
+  product_name: string;
+  product_category: string;
+  base_price: number;
+  tax_code_id: string;
+  tax_code_name: string;
+  tax_rate_bps: number;
+  station: string;
+  variants: BasketLineVariant[];
+  unit_total: number;
+  quantity: number;
+  line_total: number;
+};
+
+export type OpenTableOrderBasket = {
+  order_id: string;
+  order_number: string;
+  lines: BasketLine[];
+};
+
+export type StationPickupStatus = "READY" | "ACKNOWLEDGED";
+
+export type StationPickup = {
+  id: string;
+  order_id: string;
+  order_number: string;
+  table_id: string;
+  table_name: string;
+  station: string;
+  status: StationPickupStatus;
+  items: Array<{
+    product_id: string;
+    product_name: string;
+    quantity: number;
+    variants: BasketLineVariant[];
+  }>;
+  ready_at: number;
+  acknowledged_at: number | null;
+};
+
+export type KdsTicketStatus = "OPEN" | "IN_PROGRESS" | "DONE";
+
+export type KdsTicket = {
+  id: string;
+  order_id: string;
+  order_number: string;
+  table_id: string;
+  table_name: string;
+  station: string;
+  status: KdsTicketStatus;
+  items: Array<{
+    product_id: string;
+    product_name: string;
+    quantity: number;
+    variants: BasketLineVariant[];
+  }>;
+  created_at: number;
+  updated_at: number;
+  done_at: number | null;
+};
+
+export type LocalMasterOperationsSnapshot = {
+  open_table_baskets: Array<{
+    table_id: string;
+    table_name: string;
+    table_context: unknown;
+    basket: OpenTableOrderBasket;
+    subtotal: number;
+    tax_total: number;
+    total: number;
+    opened_at: number;
+    updated_at: number;
+  }>;
+  kds_tickets: KdsTicket[];
+  station_pickups: StationPickup[];
+  synced_at: string;
+};
+
+export type CatalogProductType = "BASIC" | "SERVICE";
+
+export type CatalogProduct = {
+  id: string;
+  category_id: string;
+  tax_id: string;
+  product_type: CatalogProductType;
+  name: string;
+  category: string;
+  price: number;
+  tax_code_id: string;
+  tax_code_name: string;
+  tax_rate_bps: number;
+  is_available: boolean;
+  isAvailable?: boolean;
+  station_id: string | null;
+  station_name: string | null;
+  station: string;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type CatalogCategory = {
+  id: string;
+  name: string;
+  sort_order: number;
+  default_station_id: string | null;
+  default_station_name: string | null;
+  product_count: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type CatalogTax = {
+  id: string;
+  name: string;
+  rate_bps: number;
+  sort_order: number;
+  product_count: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type OwnerCatalogSnapshot = {
+  products: CatalogProduct[];
+  categories: CatalogCategory[];
+  taxes: CatalogTax[];
+  output_stations: CatalogOutputStation[];
+};
+
+export type OwnerCatalogCommandRequest = {
+  request_id: string;
+  action: string;
+  payload?: unknown;
+};
+
+export type TableLayout = {
+  tenant: {
+    id: string;
+    name: string;
+  };
+  location: {
+    id: string;
+    tenant_id: string;
+    name: string;
+  };
+  floors: TableLayoutFloor[];
+};
+
+export type TableLayoutFloor = {
+  id: string;
+  location_id: string;
+  name: string;
+  sort_order: number;
+  areas: TableLayoutArea[];
+};
+
+export type TableLayoutArea = {
+  id: string;
+  floor_id: string;
+  name: string;
+  sort_order: number;
+  tables: TableLayoutTable[];
+};
+
+export type TableLayoutTable = {
+  id: string;
+  area_id: string;
+  name: string;
+  seats: number;
+  sort_order: number;
+  open_order_id: string | null;
+  open_order_number: string | null;
+  open_total: number;
+  open_order_count: number;
+};
+
 export type LocalMasterBootstrap = {
   tenant: Tenant;
   location: Location;

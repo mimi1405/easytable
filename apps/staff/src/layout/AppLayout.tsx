@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Bell, ChefHat, ClipboardList, LayoutDashboard, Package, Percent, ReceiptText, ShieldCheck, Tags } from "lucide-react";
+import { Bell, Building2, ChefHat, ClipboardList, LayoutDashboard, Package, Percent, ReceiptText, ShieldCheck, Tags } from "lucide-react";
 
 import { Separator } from "@easytable/ui/components/separator";
 import {
@@ -52,6 +52,7 @@ const ownerCatalogItems: Array<{
   { section: "products", label: "Produkte", icon: Package },
   { section: "categories", label: "Kategorien", icon: Tags },
   { section: "taxes", label: "Steuern", icon: Percent },
+  { section: "locations", label: "Standorte", icon: Building2 },
 ];
 
 const staffItems: Array<{
@@ -214,6 +215,10 @@ function AppSidebar({ view, serviceMode, onNavigate }: Pick<AppLayoutProps, "vie
 
 function viewTitle(view: AppView) {
   if (view.module === "owner") {
+    if (view.ownerSection === "locations") {
+      return "Standorte / Tischplan";
+    }
+
     return view.ownerSection === "products" ? "Katalog / Produkte" : view.ownerSection === "categories" ? "Katalog / Kategorien" : "Katalog / Steuern";
   }
 

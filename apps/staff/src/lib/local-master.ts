@@ -150,6 +150,39 @@ export type CreatedOrderSnapshot = {
   continued_existing_order: boolean;
 };
 
+export type ConnectionMode = "LOCAL" | "RELAY" | "OFFLINE";
+
+export type StaffRelayLoginRequest = {
+  tenant_id: string;
+  location_id: string;
+  email: string;
+  pin: string;
+};
+
+export type StaffRelayLoginResponse = {
+  access_token: string;
+  tenant_id: string;
+  location_id: string;
+  user_id: string;
+  display_name: string;
+  role: string;
+  expires_at: string;
+};
+
+export type StaffRelayCommand = {
+  command_id: string;
+  status: "pending" | "delivered" | "accepted" | "failed";
+  result: unknown | null;
+  poll_url: string;
+};
+
+export type OwnerCatalogSnapshot = {
+  products: CatalogProduct[];
+  categories: CatalogCategory[];
+  taxes: CatalogTax[];
+  output_stations: CatalogOutputStation[];
+};
+
 export type OpenTableOrderBasket = {
   order_id: string;
   order_number: string;
@@ -207,6 +240,30 @@ export type TableLayoutTable = {
   open_order_number: string | null;
   open_total: number;
   open_order_count: number;
+};
+
+export type OwnerLocation = {
+  id: string;
+  tenant_id: string;
+  name: string;
+};
+
+export type LayoutFloorInput = {
+  name: string;
+  sort_order?: number;
+};
+
+export type LayoutAreaInput = {
+  floor_id: string;
+  name: string;
+  sort_order?: number;
+};
+
+export type LayoutTableInput = {
+  area_id: string;
+  name: string;
+  seats: number;
+  sort_order?: number;
 };
 
 export type LocalMasterEvent = {
@@ -285,7 +342,24 @@ export type PosSettingsFile = {
   settings: PosSettings;
 };
 
+type LocalMasterIdentity = {
+  ok: boolean;
+  service: "localMaster";
+  instance_id: string;
+  location_id: string;
+  port: number;
+  version: string;
+};
+
 const configuredUrl = import.meta.env.VITE_LOCAL_REALTIME_URL as string | undefined;
+const configuredRelayUrl = import.meta.env.VITE_RELAY_SYNC_URL as string | undefined;
+const configuredStaffRelayToken = import.meta.env.VITE_STAFF_RELAY_TOKEN as string | undefined;
+const configuredRelayTenantId = import.meta.env.VITE_RELAY_TENANT_ID as string | undefined;
+const configuredRelayLocationId = import.meta.env.VITE_RELAY_LOCATION_ID as string | undefined;
+const configuredRelayUserId = import.meta.env.VITE_RELAY_USER_ID as string | undefined;
+const configuredRelayDisplayName = import.meta.env.VITE_RELAY_DISPLAY_NAME as string | undefined;
+const configuredRelayRole = import.meta.env.VITE_RELAY_ROLE as string | undefined;
+const staffRelayTokenKey = "easytable.staffRelayToken";
 
 export function getLocalMasterUrl() {
   if (configuredUrl) {
@@ -293,6 +367,57 @@ export function getLocalMasterUrl() {
   }
 
   return `${window.location.protocol}//${window.location.hostname}:3000`;
+}
+
+export function getRelaySyncUrl() {
+  return configuredRelayUrl?.replace(/\/$/, "") ?? "";
+}
+
+export async function detectConnectionMode(): Promise<ConnectionMode> {
+  if (await canReachExpectedLocalMaster()) {
+    return "LOCAL";
+  }
+
+  return getRelaySyncUrl() && getStaffRelayToken() ? "RELAY" : "OFFLINE";
+}
+
+export async function canReachLocalMaster() {
+  return (await readLocalMasterIdentity()) !== null;
+}
+
+export async function canReachExpectedLocalMaster() {
+  const identity = await readLocalMasterIdentity();
+  if (!identity) {
+    return false;
+  }
+
+  const token = getStaffRelayToken();
+  const session = readStaffRelaySession(token);
+  if (session?.location_id && identity.location_id !== session.location_id) {
+    return false;
+  }
+
+  return true;
+}
+
+async function readLocalMasterIdentity() {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 700);
+
+  try {
+    const response = await fetch(`${getLocalMasterUrl()}/api/local-master/identity`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as LocalMasterIdentity;
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export function loadCatalog() {
@@ -323,31 +448,297 @@ export function loadTableLayout() {
   });
 }
 
+export function loadTableLayoutForConnection(connectionMode: ConnectionMode) {
+  if (connectionMode === "LOCAL") {
+    return loadTableLayout();
+  }
+
+  if (connectionMode === "RELAY") {
+    return loadRelayTableLayout();
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
+export function loadRelayTableLayout() {
+  const token = getStaffRelayToken();
+  const session = readStaffRelaySession(token);
+
+  if (!token || !session?.location_id) {
+    throw new Error("Staff Relay Session fehlt oder ist ungueltig.");
+  }
+
+  return readRelayJson<TableLayout>(
+    "/api/staff/locations/" + encodeURIComponent(session.location_id) + "/table-layout",
+    token,
+  );
+}
+
+export function loadOwnerLocations() {
+  return readJson<OwnerLocation[]>("/api/owner/locations", []);
+}
+
+export function loadOwnerTableLayout(locationId: string) {
+  return readJson<TableLayout>("/api/owner/locations/" + encodeURIComponent(locationId) + "/table-layout", {
+    tenant: { id: "", name: "" },
+    location: { id: locationId, tenant_id: "", name: "" },
+    floors: [],
+  });
+}
+
 export function loadProducts() {
   return readJson<StaffProduct[]>("/api/products", []);
+}
+
+export function loadProductsForConnection(connectionMode: ConnectionMode) {
+  if (connectionMode === "LOCAL") {
+    return loadProducts();
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    return readRelayJson<StaffProduct[]>("/api/staff/locations/" + encodeURIComponent(locationId) + "/products", token);
+  }
+
+  throw new Error(describeConnectionUnavailable());
 }
 
 export function loadProductVariantGroups(productId: string) {
   return readJson<ProductVariantGroup[]>("/api/product-variant-groups/" + encodeURIComponent(productId), []);
 }
 
+export function loadProductVariantGroupsForConnection(connectionMode: ConnectionMode, productId: string) {
+  if (connectionMode === "LOCAL") {
+    return loadProductVariantGroups(productId);
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    return readRelayJson<ProductVariantGroup[]>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/product-variant-groups/" + encodeURIComponent(productId),
+      token,
+    );
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
 export function loadOpenTableOrderBasket(tableId: string) {
   return readJson<OpenTableOrderBasket | null>("/api/tables/" + encodeURIComponent(tableId) + "/open-basket", null);
 }
 
+export function loadOpenTableOrderBasketForConnection(connectionMode: ConnectionMode, tableId: string) {
+  if (connectionMode === "LOCAL") {
+    return loadOpenTableOrderBasket(tableId);
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    return readRelayJson<OpenTableOrderBasket | null>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/tables/" + encodeURIComponent(tableId) + "/open-basket",
+      token,
+    );
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
 export function createOrderSnapshot(request: {
+  request_id?: string;
   lines: BasketLine[];
   table_context: TableContext;
 }) {
-  return writeJson<CreatedOrderSnapshot>("/api/order-snapshots", "POST", { request });
+  return writeJson<CreatedOrderSnapshot>("/api/order-snapshots", "POST", { request: withOrderRequestId(request) });
+}
+
+export async function createOrderSnapshotForConnection(
+  connectionMode: ConnectionMode,
+  request: {
+    request_id?: string;
+    lines: BasketLine[];
+    table_context: TableContext;
+  },
+) {
+  const requestWithId = withOrderRequestId(request);
+
+  if (connectionMode === "LOCAL") {
+    return createOrderSnapshot(requestWithId);
+  }
+
+  if (connectionMode !== "RELAY") {
+    throw new Error("Keine Verbindung zu LocalMaster oder Relay.");
+  }
+
+  return createRelayOrderSnapshot(requestWithId);
+}
+
+export async function loginStaffRelay(input: StaffRelayLoginRequest) {
+  const relayUrl = requireRelaySyncUrl();
+  const response = await fetch(`${relayUrl}/api/staff/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const payload = await parseJsonResponse<StaffRelayLoginResponse>(response, undefined as unknown as StaffRelayLoginResponse);
+  window.localStorage.setItem(staffRelayTokenKey, payload.access_token);
+  return payload;
+}
+
+export function setStaffRelayToken(token: string) {
+  window.localStorage.setItem(staffRelayTokenKey, token);
+}
+
+export function getStaffRelayToken() {
+  const configuredDevToken = getConfiguredDevRelayToken();
+  return configuredDevToken || window.localStorage.getItem(staffRelayTokenKey) || configuredStaffRelayToken || "";
+}
+
+export function describeConnectionUnavailable() {
+  if (!getRelaySyncUrl()) {
+    return "LocalMaster nicht erreichbar und Relay-URL fehlt.";
+  }
+
+  if (!getStaffRelayToken()) {
+    return "LocalMaster nicht erreichbar und Staff Relay Token fehlt.";
+  }
+
+  return "Keine Verbindung zu LocalMaster oder Relay.";
+}
+
+function readStaffRelaySession(token: string): { location_id?: string } | null {
+  const encodedPayload = token.startsWith("dev.") ? token.slice("dev.".length) : token.split(".")[0];
+  if (!encodedPayload) {
+    return null;
+  }
+
+  try {
+    const base64 = encodedPayload.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), "="))) as { location_id?: string };
+  } catch {
+    return null;
+  }
+}
+
+function getConfiguredDevRelayToken() {
+  if (!configuredRelayTenantId || !configuredRelayLocationId) {
+    return "";
+  }
+
+  const payload = {
+    tenant_id: configuredRelayTenantId,
+    location_id: configuredRelayLocationId,
+    user_id: configuredRelayUserId || "dev_staff_user",
+    display_name: configuredRelayDisplayName || "Dev Staff",
+    role: configuredRelayRole || "OWNER",
+    exp: Date.now() + 12 * 60 * 60 * 1000,
+  };
+
+  return "dev." + btoa(JSON.stringify(payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function requireStaffRelayToken() {
+  const token = getStaffRelayToken();
+  if (!token) {
+    throw new Error("Staff Relay Session fehlt.");
+  }
+  return token;
+}
+
+function requireStaffRelayLocationId(token = getStaffRelayToken()) {
+  const session = readStaffRelaySession(token);
+  if (!session?.location_id) {
+    throw new Error("Staff Relay Session fehlt oder ist ungueltig.");
+  }
+  return session.location_id;
+}
+
+async function createRelayOrderSnapshot(request: {
+  request_id: string;
+  lines: BasketLine[];
+  table_context: TableContext;
+}) {
+  const token = getStaffRelayToken();
+
+  if (!token) {
+    throw new Error("Staff Relay Session fehlt.");
+  }
+
+  const command = await writeRelayJson<StaffRelayCommand>(
+    "/api/staff/locations/" + encodeURIComponent(request.table_context.location_id) + "/order-snapshots",
+    "POST",
+    request,
+    token,
+  );
+
+  return waitForRelayOrderAccepted(command, token);
+}
+
+async function waitForRelayOrderAccepted(command: StaffRelayCommand, token: string): Promise<CreatedOrderSnapshot> {
+  let current = command;
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (current.status === "accepted") {
+      return current.result as CreatedOrderSnapshot;
+    }
+
+    if (current.status === "failed") {
+      const result = current.result as { error?: string } | null;
+      throw new Error(result?.error ?? "Relay Command fehlgeschlagen.");
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 750));
+    current = await readRelayJson<StaffRelayCommand>(current.poll_url, token);
+  }
+
+  throw new Error("Relay Command wartet noch auf LocalMaster.");
 }
 
 export function loadStationPickups(status: StationPickupStatus | "ALL" = "READY") {
   return readJson<StationPickup[]>("/api/station-pickups?status=" + encodeURIComponent(status), []);
 }
 
+export function loadStationPickupsForConnection(connectionMode: ConnectionMode, status: StationPickupStatus | "ALL" = "READY") {
+  if (connectionMode === "LOCAL") {
+    return loadStationPickups(status);
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    return readRelayJson<StationPickup[]>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/station-pickups?status=" + encodeURIComponent(status),
+      token,
+    );
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
 export function acknowledgeStationPickup(pickupId: string) {
   return writeJson<StationPickup>("/api/station-pickups/" + encodeURIComponent(pickupId) + "/acknowledge", "POST");
+}
+
+export async function acknowledgeStationPickupForConnection(connectionMode: ConnectionMode, pickupId: string) {
+  if (connectionMode === "LOCAL") {
+    return acknowledgeStationPickup(pickupId);
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    const command = await writeRelayJson<StaffRelayCommand>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/station-pickups/" + encodeURIComponent(pickupId) + "/acknowledge",
+      "POST",
+      { request_id: "pickup_ack_" + crypto.randomUUID() },
+      token,
+    );
+    return waitForRelayCommandAccepted(command, token) as Promise<StationPickup>;
+  }
+
+  throw new Error(describeConnectionUnavailable());
 }
 
 export function loadKdsTickets(station?: string) {
@@ -356,8 +747,107 @@ export function loadKdsTickets(station?: string) {
   return readJson<KdsTicket[]>("/api/kds-tickets" + query, []);
 }
 
+export function loadKdsTicketsForConnection(connectionMode: ConnectionMode, station?: string) {
+  if (connectionMode === "LOCAL") {
+    return loadKdsTickets(station);
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    const query = station ? "?station=" + encodeURIComponent(station) : "";
+    return readRelayJson<KdsTicket[]>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/kds-tickets" + query,
+      token,
+    );
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
 export function updateKdsTicketStatus(ticketId: string, status: KdsTicketStatus) {
   return writeJson<KdsTicket>("/api/kds-tickets/" + encodeURIComponent(ticketId) + "/status", "POST", { request: { status } });
+}
+
+export async function updateKdsTicketStatusForConnection(
+  connectionMode: ConnectionMode,
+  ticketId: string,
+  status: KdsTicketStatus,
+) {
+  if (connectionMode === "LOCAL") {
+    return updateKdsTicketStatus(ticketId, status);
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    const command = await writeRelayJson<StaffRelayCommand>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/kds-tickets/" + encodeURIComponent(ticketId) + "/status",
+      "POST",
+      { request_id: "kds_status_" + crypto.randomUUID(), status },
+      token,
+    );
+    return waitForRelayCommandAccepted(command, token) as Promise<KdsTicket>;
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
+export function createLayoutFloor(locationId: string, input: LayoutFloorInput) {
+  return writeJson<TableLayoutFloor>("/api/owner/locations/" + encodeURIComponent(locationId) + "/floors", "POST", input);
+}
+
+export function updateLayoutFloor(locationId: string, floorId: string, input: Partial<LayoutFloorInput>) {
+  return writeJson<TableLayoutFloor>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/floors/" + encodeURIComponent(floorId),
+    "PATCH",
+    input,
+  );
+}
+
+export function deleteLayoutFloor(locationId: string, floorId: string) {
+  return writeJson<void>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/floors/" + encodeURIComponent(floorId),
+    "DELETE",
+  );
+}
+
+export function createLayoutArea(locationId: string, input: LayoutAreaInput) {
+  return writeJson<TableLayoutArea>("/api/owner/locations/" + encodeURIComponent(locationId) + "/areas", "POST", input);
+}
+
+export function updateLayoutArea(locationId: string, areaId: string, input: Partial<LayoutAreaInput>) {
+  return writeJson<TableLayoutArea>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/areas/" + encodeURIComponent(areaId),
+    "PATCH",
+    input,
+  );
+}
+
+export function deleteLayoutArea(locationId: string, areaId: string) {
+  return writeJson<void>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/areas/" + encodeURIComponent(areaId),
+    "DELETE",
+  );
+}
+
+export function createLayoutTable(locationId: string, input: LayoutTableInput) {
+  return writeJson<TableLayoutTable>("/api/owner/locations/" + encodeURIComponent(locationId) + "/tables", "POST", input);
+}
+
+export function updateLayoutTable(locationId: string, tableId: string, input: Partial<LayoutTableInput>) {
+  return writeJson<TableLayoutTable>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/tables/" + encodeURIComponent(tableId),
+    "PATCH",
+    input,
+  );
+}
+
+export function deleteLayoutTable(locationId: string, tableId: string) {
+  return writeJson<void>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/tables/" + encodeURIComponent(tableId),
+    "DELETE",
+  );
 }
 
 export function subscribeLocalMasterEvents(onEvent: (event: LocalMasterEvent) => void) {
@@ -426,6 +916,72 @@ export function loadCatalogOutputStations() {
   return readJson<CatalogOutputStation[]>("/api/catalog/output-stations", []);
 }
 
+export async function loadCatalogOutputStationsForConnection(connectionMode: ConnectionMode) {
+  if (connectionMode === "LOCAL") {
+    return loadCatalogOutputStations();
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    const stations = await readRelayJson<CatalogOutputStation[]>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/output-stations",
+      token,
+    );
+    return stations.map(normalizeCatalogOutputStation);
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
+export async function loadOwnerCatalogForConnection(connectionMode: ConnectionMode): Promise<OwnerCatalogSnapshot> {
+  if (connectionMode === "LOCAL") {
+    const [products, categories, taxes, outputStations] = await Promise.all([
+      loadCatalog(),
+      loadCatalogCategories(),
+      loadCatalogTaxes(),
+      loadCatalogOutputStations(),
+    ]);
+    return { products, categories, taxes, output_stations: outputStations };
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    const snapshot = await readRelayJson<OwnerCatalogSnapshot>(
+      "/api/owner/locations/" + encodeURIComponent(locationId) + "/catalog",
+      token,
+    );
+    return normalizeOwnerCatalogSnapshot(snapshot);
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
+export async function runOwnerCatalogActionForConnection(
+  connectionMode: ConnectionMode,
+  action: string,
+  payload: unknown,
+) {
+  if (connectionMode === "LOCAL") {
+    return runLocalOwnerCatalogAction(action, payload);
+  }
+
+  if (connectionMode === "RELAY") {
+    const token = requireStaffRelayToken();
+    const locationId = requireStaffRelayLocationId(token);
+    const command = await writeRelayJson<StaffRelayCommand>(
+      "/api/owner/locations/" + encodeURIComponent(locationId) + "/catalog/commands",
+      "POST",
+      { request_id: "owner_catalog_" + crypto.randomUUID(), action, payload },
+      token,
+    );
+    return waitForRelayCommandAccepted(command, token);
+  }
+
+  throw new Error(describeConnectionUnavailable());
+}
+
 export function createCatalogProduct(input: CatalogProductInput) {
   return writeJson<CatalogProduct>("/api/catalog/products", "POST", input);
 }
@@ -474,19 +1030,134 @@ export function duplicateCatalogTax(taxId: string) {
   return writeJson<CatalogTax>("/api/catalog/taxes/" + encodeURIComponent(taxId) + "/duplicate", "POST");
 }
 
+function runLocalOwnerCatalogAction(action: string, payload: unknown) {
+  const input = payload as Record<string, any>;
+
+  switch (action) {
+    case "OWNER_CATALOG_PRODUCT_CREATE":
+      return createCatalogProduct(input as CatalogProductInput);
+    case "OWNER_CATALOG_PRODUCT_UPDATE":
+      return updateCatalogProduct(String(input.product_id), input.input);
+    case "OWNER_CATALOG_PRODUCT_DELETE":
+      return deleteCatalogProduct(String(input.product_id));
+    case "OWNER_CATALOG_PRODUCT_DUPLICATE":
+      return duplicateCatalogProduct(String(input.product_id));
+    case "OWNER_CATALOG_CATEGORY_CREATE":
+      return createCatalogCategory(input as CatalogCategoryInput);
+    case "OWNER_CATALOG_CATEGORY_UPDATE":
+      return updateCatalogCategory(String(input.category_id), input.input);
+    case "OWNER_CATALOG_CATEGORY_DELETE":
+      return deleteCatalogCategory(String(input.category_id));
+    case "OWNER_CATALOG_CATEGORY_DUPLICATE":
+      return duplicateCatalogCategory(String(input.category_id));
+    case "OWNER_CATALOG_TAX_CREATE":
+      return createCatalogTax(input as CatalogTaxInput);
+    case "OWNER_CATALOG_TAX_UPDATE":
+      return updateCatalogTax(String(input.tax_id), input.input);
+    case "OWNER_CATALOG_TAX_DELETE":
+      return deleteCatalogTax(String(input.tax_id));
+    case "OWNER_CATALOG_TAX_DUPLICATE":
+      return duplicateCatalogTax(String(input.tax_id));
+    default:
+      throw new Error("Owner catalog action is not supported.");
+  }
+}
+
 async function readJson<T>(path: string, fallback: T): Promise<T> {
-  const response = await fetch(`${getLocalMasterUrl()}${path}`);
+  const response = await fetchLocalMaster(`${getLocalMasterUrl()}${path}`);
   return parseJsonResponse(response, fallback);
 }
 
 async function writeJson<T>(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
-  const response = await fetch(`${getLocalMasterUrl()}${path}`, {
+  const response = await fetchLocalMaster(`${getLocalMasterUrl()}${path}`, {
     method,
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   return parseJsonResponse(response, undefined as T);
+}
+
+async function fetchLocalMaster(input: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 1_200);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function readRelayJson<T>(path: string, token: string): Promise<T> {
+  const response = await fetch(`${requireRelaySyncUrl()}${path}`, {
+    headers: { Authorization: "Bearer " + token },
+  });
+  return parseJsonResponse(response, undefined as T);
+}
+
+async function writeRelayJson<T>(path: string, method: "POST", body: unknown, token: string): Promise<T> {
+  const response = await fetch(`${requireRelaySyncUrl()}${path}`, {
+    method,
+    headers: {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return parseJsonResponse(response, undefined as T);
+}
+
+async function waitForRelayCommandAccepted(command: StaffRelayCommand, token: string): Promise<unknown> {
+  let current = command;
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (current.status === "accepted") {
+      return current.result;
+    }
+
+    if (current.status === "failed") {
+      const result = current.result as { error?: string } | null;
+      throw new Error(result?.error ?? "Relay Command fehlgeschlagen.");
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 750));
+    current = await readRelayJson<StaffRelayCommand>(current.poll_url, token);
+  }
+
+  throw new Error("Relay Command wartet noch auf LocalMaster.");
+}
+
+function normalizeOwnerCatalogSnapshot(snapshot: OwnerCatalogSnapshot): OwnerCatalogSnapshot {
+  return {
+    products: snapshot.products.map((product) => ({ ...product, isAvailable: product.is_available })),
+    categories: snapshot.categories,
+    taxes: snapshot.taxes,
+    output_stations: snapshot.output_stations.map(normalizeCatalogOutputStation),
+  };
+}
+
+function normalizeCatalogOutputStation(station: CatalogOutputStation): CatalogOutputStation {
+  return {
+    ...station,
+    created_at: typeof station.created_at === "number" ? station.created_at : Date.parse(String(station.created_at)) || 0,
+    updated_at: typeof station.updated_at === "number" ? station.updated_at : Date.parse(String(station.updated_at)) || 0,
+  };
+}
+
+function requireRelaySyncUrl() {
+  const relayUrl = getRelaySyncUrl();
+  if (!relayUrl) {
+    throw new Error("Relay URL ist nicht konfiguriert.");
+  }
+  return relayUrl;
+}
+
+function withOrderRequestId<T extends { request_id?: string; lines: BasketLine[]; table_context: TableContext }>(request: T): T & { request_id: string } {
+  return {
+    ...request,
+    request_id: request.request_id || "staff_order_" + crypto.randomUUID(),
+  };
 }
 
 async function parseJsonResponse<T>(response: Response, fallback: T): Promise<T> {

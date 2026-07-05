@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
+import { getRelayRuntimeBinding } from "../cloudBinding.js";
+import { pushOperationsToRelay } from "../relayOperationsSync.js";
 import { broadcast } from "../realtime.js";
 import { completeMockPaymentSchema, createOrderSchema, createOrderSnapshotSchema } from "../schemas.js";
 import {
@@ -25,6 +27,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
 
     broadcast("ORDER_CREATED", { order });
     broadcast("TABLE_UPDATED", { table });
+    pushOperationsToRelayIfPaired();
 
     return reply.code(201).send({ success: true, order });
   });
@@ -52,6 +55,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
         }
         broadcast("KDS_TICKETS_REBUILT", { order });
         broadcast("TABLE_UPDATED", { table });
+        pushOperationsToRelayIfPaired();
       }
 
       return reply.code(201).send(order);
@@ -73,6 +77,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
         if (table) {
           broadcast("TABLE_UPDATED", { table });
         }
+        pushOperationsToRelayIfPaired();
       }
 
       return reply.code(201).send(payment);
@@ -94,9 +99,17 @@ export async function registerOrderRoutes(app: FastifyInstance) {
         if (table) {
           broadcast("TABLE_UPDATED", { table });
         }
+        pushOperationsToRelayIfPaired();
       }
 
       return reply.code(payment.lifecycle_state === "completed" ? 201 : 202).send(payment);
     }
   );
+}
+
+function pushOperationsToRelayIfPaired() {
+  const binding = getRelayRuntimeBinding();
+  if (binding) {
+    void pushOperationsToRelay(binding);
+  }
 }

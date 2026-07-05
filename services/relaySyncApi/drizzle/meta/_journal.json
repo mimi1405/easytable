@@ -50,6 +50,34 @@
       "when": 1783069200000,
       "tag": "0006_onboarding_users",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783072800000,
+      "tag": "0007_location_layout",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783296000000,
+      "tag": "0008_location_catalog_readmodel",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783299600000,
+      "tag": "0009_operations_readmodel",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783303200000,
+      "tag": "0010_kds_readmodel",
+      "breakpoints": true
     }
   ]
 }

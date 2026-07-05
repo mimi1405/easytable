@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 
 import { AppLayout } from "./layout/AppLayout";
 import { defaultView, type AppView } from "./layout/navigation";
-import { loadPosSettings, type LocationServiceMode } from "./lib/local-master";
+import { detectConnectionMode, loadPosSettings, type LocationServiceMode } from "./lib/local-master";
 import { KdsPage } from "./modules/kds/KdsPage";
 import { OwnerCatalogPage } from "./modules/owner/catalog/OwnerCatalogPage";
+import { OwnerLocationsPage } from "./modules/owner/locations/OwnerLocationsPage";
 import { ModulePlaceholder } from "./modules/placeholder/ModulePlaceholder";
 import { StaffServicePage } from "./modules/staff/StaffServicePage";
 
@@ -17,6 +18,14 @@ function App() {
 
     async function loadEffectiveServiceMode() {
       try {
+        const connectionMode = await detectConnectionMode();
+        if (connectionMode !== "LOCAL") {
+          if (isMounted) {
+            setEffectiveServiceMode("TABLE_SERVICE");
+          }
+          return;
+        }
+
         const settingsFile = await loadPosSettings();
 
         if (isMounted) {
@@ -43,7 +52,7 @@ function App() {
   return (
     <AppLayout onNavigate={setView} serviceMode={effectiveServiceMode} view={view}>
       {view.module === "owner" ? (
-        <OwnerCatalogPage section={view.ownerSection} />
+        view.ownerSection === "locations" ? <OwnerLocationsPage /> : <OwnerCatalogPage section={view.ownerSection} />
       ) : view.module === "staff" ? (
         isStaffModuleAvailable ? (
           <StaffServicePage

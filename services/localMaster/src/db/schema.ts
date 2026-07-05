@@ -45,6 +45,55 @@ export const locations = sqliteTable(
   ]
 );
 
+export const layoutFloors = sqliteTable(
+  "layout_floors",
+  {
+    id: text("id").primaryKey(),
+    locationId: text("location_id").notNull(),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull()
+  },
+  (table) => [
+    index("idx_layout_floors_location").on(table.locationId, table.sortOrder, table.name),
+    uniqueIndex("idx_layout_floors_location_name").on(table.locationId, table.name)
+  ]
+);
+
+export const layoutAreas = sqliteTable(
+  "layout_areas",
+  {
+    id: text("id").primaryKey(),
+    floorId: text("floor_id").notNull().references(() => layoutFloors.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull()
+  },
+  (table) => [
+    index("idx_layout_areas_floor").on(table.floorId, table.sortOrder, table.name),
+    uniqueIndex("idx_layout_areas_floor_name").on(table.floorId, table.name)
+  ]
+);
+
+export const layoutTables = sqliteTable(
+  "layout_tables",
+  {
+    id: text("id").primaryKey(),
+    areaId: text("area_id").notNull().references(() => layoutAreas.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    seats: integer("seats").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull()
+  },
+  (table) => [
+    index("idx_layout_tables_area").on(table.areaId, table.sortOrder, table.name),
+    uniqueIndex("idx_layout_tables_area_name").on(table.areaId, table.name)
+  ]
+);
+
 export const orders = sqliteTable(
   "orders",
   {

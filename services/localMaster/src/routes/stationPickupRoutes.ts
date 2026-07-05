@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
+import { getRelayRuntimeBinding } from "../cloudBinding.js";
+import { pushOperationsToRelay } from "../relayOperationsSync.js";
 import { broadcast } from "../realtime.js";
 import { createStationPickupSchema } from "../schemas.js";
 import {
@@ -28,6 +30,7 @@ export async function registerStationPickupRoutes(app: FastifyInstance) {
       const pickup = createStationPickup(request.body.request);
 
       broadcast("STATION_PICKUP_READY", { pickup });
+      pushOperationsToRelayIfPaired();
 
       return reply.code(201).send(pickup);
     }
@@ -39,8 +42,16 @@ export async function registerStationPickupRoutes(app: FastifyInstance) {
       const pickup = acknowledgeStationPickup(request.params.pickupId);
 
       broadcast("STATION_PICKUP_ACKNOWLEDGED", { pickup });
+      pushOperationsToRelayIfPaired();
 
       return pickup;
     }
   );
+}
+
+function pushOperationsToRelayIfPaired() {
+  const binding = getRelayRuntimeBinding();
+  if (binding) {
+    void pushOperationsToRelay(binding);
+  }
 }

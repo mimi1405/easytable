@@ -5,6 +5,8 @@ import {
   LayoutGridIcon,
   ListIcon,
   ShoppingBasketIcon,
+  WifiIcon,
+  WifiOffIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -18,13 +20,15 @@ import { cn } from "@easytable/ui/lib/utils";
 
 import type { StaffTableContext } from "../../layout/navigation";
 import {
-  createOrderSnapshot,
-  loadOpenTableOrderBasket,
-  loadProducts,
-  loadProductVariantGroups,
+  createOrderSnapshotForConnection,
+  detectConnectionMode,
+  loadOpenTableOrderBasketForConnection,
+  loadProductsForConnection,
+  loadProductVariantGroupsForConnection,
   subscribeLocalMasterEvents,
   type BasketLine,
   type BasketLineVariant,
+  type ConnectionMode,
   type ProductVariantGroup,
   type ProductVariantGroupItem,
   type StaffProduct,
@@ -65,14 +69,42 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [basketOpen, setBasketOpen] = useState(false);
   const [orderNotice, setOrderNotice] = useState<string | null>(null);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
 
   const loadCatalogProducts = useCallback(async () => {
+    if (connectionMode === "OFFLINE") {
+      return;
+    }
+
     try {
-      const databaseProducts = await loadProducts();
+      const databaseProducts = await loadProductsForConnection(connectionMode);
       setProducts(databaseProducts.filter((product) => product.is_available));
     } catch (error) {
       console.warn("Could not load products from Local Master.", error);
     }
+  }, [connectionMode]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function refreshConnectionMode() {
+      const nextMode = await detectConnectionMode();
+      if (isMounted) {
+        setConnectionMode(nextMode);
+      }
+    }
+
+    void refreshConnectionMode();
+    window.addEventListener("online", refreshConnectionMode);
+    window.addEventListener("offline", refreshConnectionMode);
+    document.addEventListener("visibilitychange", refreshConnectionMode);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("online", refreshConnectionMode);
+      window.removeEventListener("offline", refreshConnectionMode);
+      document.removeEventListener("visibilitychange", refreshConnectionMode);
+    };
   }, []);
 
   useEffect(() => {
@@ -80,7 +112,11 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
 
     async function loadInitialCatalogProducts() {
       try {
-        const databaseProducts = await loadProducts();
+        if (connectionMode === "OFFLINE") {
+          return;
+        }
+
+        const databaseProducts = await loadProductsForConnection(connectionMode);
 
         if (isMounted) {
           setProducts(databaseProducts.filter((product) => product.is_available));
@@ -95,15 +131,19 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [connectionMode]);
 
   useEffect(() => {
+    if (connectionMode !== "LOCAL") {
+      return undefined;
+    }
+
     return subscribeLocalMasterEvents((event) => {
       if (event.type === "CATALOG_UPDATED") {
         void loadCatalogProducts();
       }
     });
-  }, [loadCatalogProducts]);
+  }, [connectionMode, loadCatalogProducts]);
 
   useEffect(() => {
     let isMounted = true;
@@ -113,7 +153,15 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
       setOrderNotice(null);
 
       try {
-        const openBasket = await loadOpenTableOrderBasket(tableContext.table_id);
+        if (connectionMode === "OFFLINE") {
+          if (isMounted) {
+            setBasketLines([]);
+            setOrderNotice(null);
+          }
+          return;
+        }
+
+        const openBasket = await loadOpenTableOrderBasketForConnection(connectionMode, tableContext.table_id);
 
         if (isMounted) {
           setBasketLines(openBasket?.lines ?? []);
@@ -133,7 +181,7 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
     return () => {
       isMounted = false;
     };
-  }, [tableContext.table_id]);
+  }, [connectionMode, tableContext.table_id]);
 
   const productCards = useMemo(
     () =>
@@ -172,7 +220,7 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
 
   async function handleProductPress(product: StaffProduct) {
     try {
-      const groups = await loadProductVariantGroups(product.id);
+      const groups = await loadProductVariantGroupsForConnection(connectionMode, product.id);
 
       if (groups.length === 0) {
         addProductToBasket(product, []);
@@ -316,14 +364,18 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
     setOrderNotice(null);
 
     try {
-      const order = await createOrderSnapshot({
+      const order = await createOrderSnapshotForConnection(connectionMode, {
         lines: basketLines,
         table_context: tableContext,
       });
 
       setBasketLines([]);
       setBasketOpen(false);
-      setOrderNotice(`Auftrag ${order.order_number} wurde gespeichert.`);
+      setOrderNotice(
+        connectionMode === "RELAY"
+          ? `Auftrag ${order.order_number} wurde via Relay angenommen.`
+          : `Auftrag ${order.order_number} wurde gespeichert.`,
+      );
     } catch (error) {
       console.error("Could not create order snapshot.", error);
       setOrderNotice(error instanceof Error ? error.message : "Auftrag konnte nicht gespeichert werden.");
@@ -355,6 +407,7 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
             <ModeButton active={catalogViewMode === "grid"} label="Raster" icon={LayoutGridIcon} onClick={() => setCatalogViewMode("grid")} />
             <ModeButton active={catalogViewMode === "list"} label="Liste" icon={ListIcon} onClick={() => setCatalogViewMode("list")} />
           </div>
+          <ConnectionModeBadge mode={connectionMode} />
         </div>
 
         <nav className="flex gap-2 overflow-x-auto border-t border-slate-100 px-3 py-2 [scrollbar-width:none] sm:px-4 [&::-webkit-scrollbar]:hidden">
@@ -502,6 +555,28 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ConnectionModeBadge({ mode }: { mode: ConnectionMode }) {
+  const isLocal = mode === "LOCAL";
+  const isRelay = mode === "RELAY";
+  const Icon = mode === "OFFLINE" ? WifiOffIcon : WifiIcon;
+
+  return (
+    <div
+      className={cn(
+        "hidden h-10 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-black uppercase sm:flex",
+        isLocal
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : isRelay
+            ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+            : "border-rose-200 bg-rose-50 text-rose-700",
+      )}
+    >
+      <Icon className="size-4" />
+      {isLocal ? "Lokal" : isRelay ? "Relay" : "Offline"}
+    </div>
   );
 }
 
