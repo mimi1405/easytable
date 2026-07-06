@@ -6,12 +6,11 @@ import { Card, CardContent } from "@easytable/ui/components/card";
 
 import {
   acknowledgeStationPickupForConnection,
-  detectConnectionMode,
   loadStationPickupsForConnection,
   subscribeLocalMasterEvents,
-  type ConnectionMode,
   type StationPickup,
 } from "../../lib/local-master";
+import { useConnectionModeMonitor } from "../../lib/useConnectionModeMonitor";
 
 const pickupReloadEvents = new Set(["STATION_PICKUP_READY", "STATION_PICKUP_ACKNOWLEDGED"]);
 
@@ -20,7 +19,7 @@ export function StaffPickupsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmittingPickupId, setIsSubmittingPickupId] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
+  const { connectionMode, refreshConnectionMode } = useConnectionModeMonitor();
 
   const loadPickups = useCallback(async (showLoadingState = true) => {
     if (showLoadingState) {
@@ -28,26 +27,24 @@ export function StaffPickupsScreen() {
     }
 
     try {
-      const mode = await detectConnectionMode();
-      setConnectionMode(mode);
-
-      if (mode === "OFFLINE") {
+      if (connectionMode === "OFFLINE") {
         setPickups([]);
         setNotice("Keine Verbindung zu LocalMaster oder Relay.");
         return;
       }
 
-      setPickups(await loadStationPickupsForConnection(mode, "READY"));
+      setPickups(await loadStationPickupsForConnection(connectionMode, "READY"));
       setNotice(null);
     } catch (error) {
       console.warn("Could not load station pickups.", error);
       setNotice("Abholungen konnten nicht geladen werden.");
+      void refreshConnectionMode();
     } finally {
       if (showLoadingState) {
         setIsLoading(false);
       }
     }
-  }, []);
+  }, [connectionMode, refreshConnectionMode]);
 
   useEffect(() => {
     void loadPickups();
@@ -78,7 +75,7 @@ export function StaffPickupsScreen() {
 
     const timer = window.setInterval(() => {
       void loadPickups(false);
-    }, 3_000);
+    }, 1_500);
 
     return () => window.clearInterval(timer);
   }, [connectionMode, loadPickups]);
@@ -103,6 +100,7 @@ export function StaffPickupsScreen() {
     } catch (error) {
       console.error("Could not acknowledge station pickup.", error);
       setNotice(error instanceof Error ? error.message : "Abholung konnte nicht bestätigt werden.");
+      void refreshConnectionMode();
     } finally {
       setIsSubmittingPickupId(null);
     }

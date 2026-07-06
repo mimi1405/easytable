@@ -8,7 +8,7 @@ import {
   WifiIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Drawer,
   DrawerContent,
@@ -21,7 +21,6 @@ import { cn } from "@easytable/ui/lib/utils";
 import type { StaffTableContext } from "../../layout/navigation";
 import {
   createOrderSnapshotForConnection,
-  detectConnectionMode,
   loadOpenTableOrderBasketForConnection,
   loadProductsForConnection,
   loadProductVariantGroupsForConnection,
@@ -33,6 +32,7 @@ import {
   type ProductVariantGroupItem,
   type StaffProduct,
 } from "../../lib/local-master";
+import { useConnectionModeMonitor } from "../../lib/useConnectionModeMonitor";
 import { StaffBasket } from "./components/StaffBasket";
 import { StaffVariantDrawer } from "./components/StaffVariantDrawer";
 import { formatChf } from "./utils";
@@ -69,7 +69,8 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [basketOpen, setBasketOpen] = useState(false);
   const [orderNotice, setOrderNotice] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
+  const { connectionMode, refreshConnectionMode } = useConnectionModeMonitor();
+  const hasDraftChangesRef = useRef(false);
 
   const loadCatalogProducts = useCallback(async () => {
     if (connectionMode === "OFFLINE") {
@@ -83,29 +84,6 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
       console.warn("Could not load products from Local Master.", error);
     }
   }, [connectionMode]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function refreshConnectionMode() {
-      const nextMode = await detectConnectionMode();
-      if (isMounted) {
-        setConnectionMode(nextMode);
-      }
-    }
-
-    void refreshConnectionMode();
-    window.addEventListener("online", refreshConnectionMode);
-    window.addEventListener("offline", refreshConnectionMode);
-    document.addEventListener("visibilitychange", refreshConnectionMode);
-
-    return () => {
-      isMounted = false;
-      window.removeEventListener("online", refreshConnectionMode);
-      window.removeEventListener("offline", refreshConnectionMode);
-      document.removeEventListener("visibilitychange", refreshConnectionMode);
-    };
-  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -145,43 +123,61 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
     });
   }, [connectionMode, loadCatalogProducts]);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadOpenBasket() {
-      setBasketLines([]);
-      setOrderNotice(null);
-
-      try {
-        if (connectionMode === "OFFLINE") {
-          if (isMounted) {
-            setBasketLines([]);
-            setOrderNotice(null);
-          }
-          return;
-        }
-
-        const openBasket = await loadOpenTableOrderBasketForConnection(connectionMode, tableContext.table_id);
-
-        if (isMounted) {
-          setBasketLines(openBasket?.lines ?? []);
-        }
-      } catch (error) {
-        console.warn("Could not load open table basket.", error);
-
-        if (isMounted) {
-          setBasketLines([]);
-          setOrderNotice("Offener Tischauftrag konnte nicht geladen werden.");
-        }
-      }
+  const loadOpenBasket = useCallback(async (clearBeforeLoad = false) => {
+    if (!clearBeforeLoad && hasDraftChangesRef.current) {
+      return;
     }
 
-    void loadOpenBasket();
+    if (clearBeforeLoad) {
+      setBasketLines([]);
+      setDraftChanges(false);
+      setOrderNotice(null);
+    }
 
-    return () => {
-      isMounted = false;
-    };
+    try {
+      if (connectionMode === "OFFLINE") {
+        setBasketLines([]);
+        setOrderNotice(null);
+        return;
+      }
+
+      const openBasket = await loadOpenTableOrderBasketForConnection(connectionMode, tableContext.table_id);
+      setBasketLines(openBasket?.lines ?? []);
+      setDraftChanges(false);
+    } catch (error) {
+      console.warn("Could not load open table basket.", error);
+      setBasketLines([]);
+      setOrderNotice("Offener Tischauftrag konnte nicht geladen werden.");
+    }
   }, [connectionMode, tableContext.table_id]);
+
+  useEffect(() => {
+    void loadOpenBasket(!hasDraftChangesRef.current);
+  }, [loadOpenBasket]);
+
+  useEffect(() => {
+    if (connectionMode !== "LOCAL") {
+      return undefined;
+    }
+
+    return subscribeLocalMasterEvents((event) => {
+      if (event.type === "ORDER_CREATED" || event.type === "TABLE_UPDATED") {
+        void loadOpenBasket(false);
+      }
+    });
+  }, [connectionMode, loadOpenBasket]);
+
+  useEffect(() => {
+    if (connectionMode !== "RELAY") {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadOpenBasket(false);
+    }, 1_500);
+
+    return () => window.clearInterval(timer);
+  }, [connectionMode, loadOpenBasket]);
 
   const productCards = useMemo(
     () =>
@@ -291,6 +287,7 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
     const unitTotal = product.price + variants.reduce((total, variant) => total + variant.price_delta, 0);
     const id = `${product.id}:${variants.map((variant) => variant.variant_item_id).join("|")}`;
 
+    setDraftChanges(true);
     setBasketLines((current) => {
       const existingLine = current.find((line) => line.id === id);
 
@@ -330,6 +327,7 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
   }
 
   function decreaseBasketLine(lineId: string) {
+    setDraftChanges(true);
     setBasketLines((current) =>
       current.flatMap((line) => {
         if (line.id !== lineId) {
@@ -352,6 +350,7 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
   }
 
   function removeBasketLine(lineId: string) {
+    setDraftChanges(true);
     setBasketLines((current) => current.filter((line) => line.id !== lineId));
   }
 
@@ -369,7 +368,8 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
         table_context: tableContext,
       });
 
-      setBasketLines([]);
+      setDraftChanges(false);
+      await loadOpenBasket(true);
       setBasketOpen(false);
       setOrderNotice(
         connectionMode === "RELAY"
@@ -379,9 +379,14 @@ export function StaffOrderScreen({ tableContext, onBackToTables }: StaffOrderScr
     } catch (error) {
       console.error("Could not create order snapshot.", error);
       setOrderNotice(error instanceof Error ? error.message : "Auftrag konnte nicht gespeichert werden.");
+      void refreshConnectionMode();
     } finally {
       setIsCreatingOrder(false);
     }
+  }
+
+  function setDraftChanges(value: boolean) {
+    hasDraftChangesRef.current = value;
   }
 
   return (

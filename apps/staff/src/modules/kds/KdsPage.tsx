@@ -6,16 +6,15 @@ import { Card, CardContent } from "@easytable/ui/components/card";
 import { cn } from "@easytable/ui/lib/utils";
 
 import {
-  detectConnectionMode,
   loadCatalogOutputStationsForConnection,
   loadKdsTicketsForConnection,
   subscribeLocalMasterEvents,
   updateKdsTicketStatusForConnection,
   type CatalogOutputStation,
-  type ConnectionMode,
   type KdsTicket,
   type KdsTicketStatus,
 } from "../../lib/local-master";
+import { useConnectionModeMonitor } from "../../lib/useConnectionModeMonitor";
 
 const kdsReloadEvents = new Set(["ORDER_CREATED", "KDS_TICKET_CREATED", "KDS_TICKET_UPDATED", "KDS_TICKETS_REBUILT"]);
 
@@ -39,32 +38,35 @@ export function KdsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [updatingTicketId, setUpdatingTicketId] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
+  const { connectionMode, refreshConnectionMode } = useConnectionModeMonitor();
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadStations() {
       try {
-        const mode = await detectConnectionMode();
         if (!isMounted) {
           return;
         }
 
-        setConnectionMode(mode);
-        if (mode === "OFFLINE") {
+        if (connectionMode === "OFFLINE") {
           setStations([]);
           setSelectedStation("");
           setNotice("LocalMaster ist nicht erreichbar und Relay ist nicht bereit.");
           return;
         }
 
-        const outputStations = await loadCatalogOutputStationsForConnection(mode);
+        const outputStations = await loadCatalogOutputStationsForConnection(connectionMode);
         const kdsStations = outputStations.filter((station) => station.is_active && (station.kind === "KDS" || station.kind === "KDS_AND_PRINTER"));
 
         if (isMounted) {
           setStations(kdsStations);
-          setSelectedStation((current) => current || (kdsStations[0]?.name ?? ""));
+          setSelectedStation((current) =>
+            kdsStations.some((station) => station.name === current)
+              ? current
+              : kdsStations[0]?.name ?? ""
+          );
+          setNotice(null);
         }
       } catch (error) {
         console.warn("Could not load output stations.", error);
@@ -72,6 +74,7 @@ export function KdsPage() {
         if (isMounted) {
           setNotice("Stationen konnten nicht geladen werden.");
         }
+        void refreshConnectionMode();
       }
     }
 
@@ -80,7 +83,7 @@ export function KdsPage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [connectionMode, refreshConnectionMode]);
 
   const loadTickets = useCallback(async (showLoadingState = true) => {
     if (!selectedStation) {
@@ -104,6 +107,7 @@ export function KdsPage() {
     } catch (error) {
       console.warn("Could not load KDS tickets.", error);
       setNotice("KDS Tickets konnten nicht geladen werden.");
+      void refreshConnectionMode();
     } finally {
       if (showLoadingState) {
         setIsLoading(false);
@@ -167,6 +171,7 @@ export function KdsPage() {
     } catch (error) {
       console.error("Could not update KDS ticket.", error);
       setNotice(error instanceof Error ? error.message : "Ticket konnte nicht verschoben werden.");
+      void refreshConnectionMode();
     } finally {
       setUpdatingTicketId(null);
     }

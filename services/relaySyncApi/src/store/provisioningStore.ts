@@ -6,11 +6,12 @@ import { getDrizzleDatabase } from "../db/client.js";
 import { catalogOutputStations, localMasterCredentials, localMasterPairingSessions, locations, relayCommands, tenants } from "../db/schema.js";
 import type {
   CatalogOutputStation,
-  OwnerCatalogSnapshot,
   LocalMasterBootstrap,
+  LocalMasterOperationsSnapshot,
   LocalMasterPairRequest,
   LocalMasterPairResponse,
   LocalMasterPairingSession,
+  OwnerCatalogSnapshot,
   OnboardingStatus,
   RelayCommand,
   RelayCommandAckRequest
@@ -262,6 +263,14 @@ export async function ackRelayCommand(
     if (catalogSnapshot) {
       const { replaceLocalMasterCatalog } = await import("./catalogRelayStore.js");
       await replaceLocalMasterCatalog(relayToken, catalogSnapshot);
+    }
+  }
+
+  if (status === "accepted") {
+    const operationsSnapshot = extractOperationsSnapshot(request.result);
+    if (operationsSnapshot) {
+      const { replaceLocalMasterOperations } = await import("./operationsRelayStore.js");
+      await replaceLocalMasterOperations(relayToken, operationsSnapshot);
     }
   }
 
@@ -519,6 +528,19 @@ function extractCatalogSnapshot(result: unknown): OwnerCatalogSnapshot | null {
   }
 
   return snapshot as OwnerCatalogSnapshot;
+}
+
+function extractOperationsSnapshot(result: unknown): LocalMasterOperationsSnapshot | null {
+  if (!result || typeof result !== "object" || !("operations_snapshot" in result)) {
+    return null;
+  }
+
+  const snapshot = (result as { operations_snapshot?: unknown }).operations_snapshot;
+  if (!snapshot || typeof snapshot !== "object") {
+    return null;
+  }
+
+  return snapshot as LocalMasterOperationsSnapshot;
 }
 
 function unwrapAckResult(result: unknown) {

@@ -23,6 +23,9 @@ import type { PosOrderSnapshot } from "../store/storeState.js";
 process.env.LOCAL_MASTER_DB_PATH = join(mkdtempSync(join(tmpdir(), "easytable-localmaster-test-")), "local-master.sqlite3");
 
 const { buildServer } = await import("../server.js");
+const { getDrizzleDatabase } = await import("../db/client.js");
+const { localState } = await import("../db/schema.js");
+const { pollRelayCommands } = await import("../relayCommandWorker.js");
 const {
   payments,
   persistPayments,
@@ -464,6 +467,143 @@ test("owner table delete rejects tables with open orders", async () => {
   assert.equal(response.json<{ error: string }>().error, "Table has an open order.");
 });
 
+test("relay command polling tolerates unreachable relay", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const now = Date.now();
+
+  getDrizzleDatabase()
+    .insert(localState)
+    .values({
+      key: "localMaster.cloudBinding",
+      valueJson: JSON.stringify({
+        status: "PAIRED",
+        tenant_id: "tenant_basilica",
+        location_id: "loc_basilica_main",
+        local_master_instance_id: "lm_test_unreachable_relay",
+        relay_base_url: "http://relay-unreachable.test",
+        paired_at: new Date(now).toISOString(),
+        last_verified_at: new Date(now).toISOString(),
+        invalid_reason: null,
+        bootstrap_completed_at: new Date(now).toISOString(),
+        bootstrap_error: null,
+        relay_token: "relay_token_test"
+      }),
+      updatedAt: now
+    })
+    .onConflictDoUpdate({
+      target: localState.key,
+      set: {
+        valueJson: JSON.stringify({
+          status: "PAIRED",
+          tenant_id: "tenant_basilica",
+          location_id: "loc_basilica_main",
+          local_master_instance_id: "lm_test_unreachable_relay",
+          relay_base_url: "http://relay-unreachable.test",
+          paired_at: new Date(now).toISOString(),
+          last_verified_at: new Date(now).toISOString(),
+          invalid_reason: null,
+          bootstrap_completed_at: new Date(now).toISOString(),
+          bootstrap_error: null,
+          relay_token: "relay_token_test"
+        }),
+        updatedAt: now
+      }
+    })
+    .run();
+
+  globalThis.fetch = async () => {
+    throw new TypeError("fetch failed");
+  };
+  console.warn = () => undefined;
+
+  try {
+    await pollRelayCommands();
+    await pollRelayCommands();
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
+test("relay staff order ACK includes fresh operations snapshot", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const now = Date.now();
+  const commandId = "relay_staff_order_ack_snapshot";
+  const table: TableContext = {
+    tenant_id: "tenant_basilica",
+    location_id: "loc_basilica_main",
+    floor_id: "floor_basilica_eg",
+    area_id: "area_basilica_bar",
+    table_id: "table_basilica_bar_1",
+    table_name: "1",
+    area_name: "Bar",
+    floor_name: "EG",
+    seats: 2
+  };
+  let ackBody: unknown = null;
+
+  writeCloudBindingForTest({
+    localMasterInstanceId: "lm_test_ack_snapshot",
+    now,
+    relayBaseUrl: "http://relay.test",
+    relayToken: "relay_token_ack_snapshot"
+  });
+
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+
+    if (url.endsWith("/api/local-masters/commands/pending")) {
+      return jsonResponse({
+        data: [{
+          command_id: commandId,
+          tenant_id: "tenant_basilica",
+          location_id: "loc_basilica_main",
+          local_master_instance_id: "lm_test_ack_snapshot",
+          type: "STAFF_ORDER_SNAPSHOT_CREATE",
+          status: "delivered",
+          payload: {
+            request_id: "relay_staff_order_ack_snapshot_request",
+            lines: [basketLine("relay-ack-snapshot-line", 900)],
+            table_context: table
+          }
+        }]
+      });
+    }
+
+    if (url.endsWith("/api/local-masters/operations")) {
+      return jsonResponse({ ok: true });
+    }
+
+    if (url.endsWith("/api/local-masters/commands/" + commandId + "/ack")) {
+      ackBody = JSON.parse(String(init?.body ?? "{}"));
+      return jsonResponse({ ok: true });
+    }
+
+    return new Response("Unexpected URL " + url, { status: 500 });
+  };
+  console.warn = () => undefined;
+
+  try {
+    await pollRelayCommands();
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+
+  const capturedAck = ackBody as {
+    status?: string;
+    result?: { operations_snapshot?: { open_table_baskets?: Array<{ table_id: string }> } };
+  };
+
+  assert.equal(capturedAck.status, "accepted");
+  assert.equal(
+    capturedAck.result?.operations_snapshot?.open_table_baskets?.some((entry) => entry.table_id === table.table_id),
+    true
+  );
+});
+
 async function postJson<T>(url: string, request: unknown, expectedStatus: number): Promise<T> {
   const response = await app.inject({
     method: "POST",
@@ -473,6 +613,65 @@ async function postJson<T>(url: string, request: unknown, expectedStatus: number
 
   assert.equal(response.statusCode, expectedStatus, response.body);
   return response.json<T>();
+}
+
+function writeCloudBindingForTest({
+  localMasterInstanceId,
+  now,
+  relayBaseUrl,
+  relayToken
+}: {
+  localMasterInstanceId: string;
+  now: number;
+  relayBaseUrl: string;
+  relayToken: string;
+}) {
+  getDrizzleDatabase()
+    .insert(localState)
+    .values({
+      key: "localMaster.cloudBinding",
+      valueJson: JSON.stringify({
+        status: "PAIRED",
+        tenant_id: "tenant_basilica",
+        location_id: "loc_basilica_main",
+        local_master_instance_id: localMasterInstanceId,
+        relay_base_url: relayBaseUrl,
+        paired_at: new Date(now).toISOString(),
+        last_verified_at: new Date(now).toISOString(),
+        invalid_reason: null,
+        bootstrap_completed_at: new Date(now).toISOString(),
+        bootstrap_error: null,
+        relay_token: relayToken
+      }),
+      updatedAt: now
+    })
+    .onConflictDoUpdate({
+      target: localState.key,
+      set: {
+        valueJson: JSON.stringify({
+          status: "PAIRED",
+          tenant_id: "tenant_basilica",
+          location_id: "loc_basilica_main",
+          local_master_instance_id: localMasterInstanceId,
+          relay_base_url: relayBaseUrl,
+          paired_at: new Date(now).toISOString(),
+          last_verified_at: new Date(now).toISOString(),
+          invalid_reason: null,
+          bootstrap_completed_at: new Date(now).toISOString(),
+          bootstrap_error: null,
+          relay_token: relayToken
+        }),
+        updatedAt: now
+      }
+    })
+    .run();
+}
+
+function jsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
 }
 
 async function writeDirect<T>(method: "POST" | "PATCH" | "DELETE", url: string, payload: object | undefined, expectedStatus: number): Promise<T> {

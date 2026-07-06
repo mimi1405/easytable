@@ -6,15 +6,14 @@ import { cn } from "@easytable/ui/lib/utils";
 
 import type { StaffTableContext } from "../../layout/navigation";
 import {
-  detectConnectionMode,
   loadTableLayoutForConnection,
   subscribeLocalMasterEvents,
-  type ConnectionMode,
   type TableLayout,
   type TableLayoutArea,
   type TableLayoutFloor,
   type TableLayoutTable,
 } from "../../lib/local-master";
+import { useConnectionModeMonitor } from "../../lib/useConnectionModeMonitor";
 import { formatChf } from "./utils";
 
 type StaffTablePlanScreenProps = {
@@ -29,7 +28,7 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
   const [activeAreaId, setActiveAreaId] = useState("");
   const [isLoadingLayout, setIsLoadingLayout] = useState(true);
   const [layoutNotice, setLayoutNotice] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
+  const { connectionMode } = useConnectionModeMonitor();
 
   const loadLayout = useCallback(async (showLoadingState = true) => {
     if (showLoadingState) {
@@ -39,9 +38,7 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
     setLayoutNotice(null);
 
     try {
-      const mode = await detectConnectionMode();
-      setConnectionMode(mode);
-      const tableLayout = await loadTableLayoutForConnection(mode);
+      const tableLayout = await loadTableLayoutForConnection(connectionMode);
       const firstFloor = tableLayout.floors[0];
       const firstArea = firstFloor?.areas[0];
 
@@ -69,7 +66,7 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
         setIsLoadingLayout(false);
       }
     }
-  }, []);
+  }, [connectionMode]);
 
   useEffect(() => {
     void loadLayout();
@@ -94,7 +91,7 @@ export function StaffTablePlanScreen({ onSelectTable }: StaffTablePlanScreenProp
 
     const timer = window.setInterval(() => {
       void loadLayout(false);
-    }, 3_000);
+    }, 1_500);
 
     return () => window.clearInterval(timer);
   }, [connectionMode, loadLayout]);

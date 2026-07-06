@@ -15,7 +15,7 @@ import {
 } from "./catalogStore.js";
 import { broadcast } from "./realtime.js";
 import { getCatalogSnapshot, pushCatalogToRelay } from "./relayCatalogSync.js";
-import { pushOperationsToRelay } from "./relayOperationsSync.js";
+import { getOperationsSnapshot, pushOperationsToRelay } from "./relayOperationsSync.js";
 import { acknowledgeStationPickup, createOrderSnapshot, updateKdsTicketStatus } from "./store.js";
 import { beginIdempotentCommand, completeIdempotentCommand, failIdempotentCommand } from "./store/commandStore.js";
 import type {
@@ -81,6 +81,7 @@ export async function pollRelayCommands() {
     });
 
     if (!response.ok) {
+      console.warn("Relay command poll failed.", response.status, await readRelayError(response));
       return;
     }
 
@@ -88,6 +89,8 @@ export async function pollRelayCommands() {
     for (const command of payload.data ?? []) {
       await executeRelayCommand(command, binding);
     }
+  } catch (error) {
+    console.warn("Relay command poll failed.", error);
   } finally {
     isPolling = false;
   }
@@ -99,22 +102,34 @@ async function executeRelayCommand(command: RelayCommand, binding: NonNullable<R
 
     if (command.type === "STAFF_ORDER_SNAPSHOT_CREATE") {
       const result = executeStaffOrderCommand(command);
+      const operationsSnapshot = binding.location_id ? getOperationsSnapshot(binding.location_id) : null;
       await pushOperationsToRelay(binding);
-      await ackRelayCommand(binding.relay_base_url, binding.relay_token, command.command_id, "accepted", result);
+      await ackRelayCommandSafely(binding, command.command_id, "accepted", {
+        entity: result,
+        operations_snapshot: operationsSnapshot
+      });
       return;
     }
 
     if (command.type === "STAFF_PICKUP_ACKNOWLEDGE") {
       const result = executeStaffPickupAcknowledgeCommand(command);
+      const operationsSnapshot = binding.location_id ? getOperationsSnapshot(binding.location_id) : null;
       await pushOperationsToRelay(binding);
-      await ackRelayCommand(binding.relay_base_url, binding.relay_token, command.command_id, "accepted", result);
+      await ackRelayCommandSafely(binding, command.command_id, "accepted", {
+        entity: result,
+        operations_snapshot: operationsSnapshot
+      });
       return;
     }
 
     if (command.type === "KDS_TICKET_STATUS_UPDATE") {
       const result = executeKdsTicketStatusCommand(command);
+      const operationsSnapshot = binding.location_id ? getOperationsSnapshot(binding.location_id) : null;
       await pushOperationsToRelay(binding);
-      await ackRelayCommand(binding.relay_base_url, binding.relay_token, command.command_id, "accepted", result.ticket);
+      await ackRelayCommandSafely(binding, command.command_id, "accepted", {
+        entity: result.ticket,
+        operations_snapshot: operationsSnapshot
+      });
       return;
     }
 
@@ -123,7 +138,7 @@ async function executeRelayCommand(command: RelayCommand, binding: NonNullable<R
       const result = executeIdempotentOwnerCatalogCommand(command);
       const catalogSnapshot = getCatalogSnapshot();
       await pushCatalogToRelay(binding);
-      await ackRelayCommand(binding.relay_base_url, binding.relay_token, command.command_id, "accepted", {
+      await ackRelayCommandSafely(binding, command.command_id, "accepted", {
         entity: result,
         catalog_snapshot: catalogSnapshot
       });
@@ -132,9 +147,8 @@ async function executeRelayCommand(command: RelayCommand, binding: NonNullable<R
 
     throw new Error("Unsupported relay command type: " + command.type);
   } catch (error) {
-    await ackRelayCommand(
-      binding.relay_base_url,
-      binding.relay_token,
+    await ackRelayCommandSafely(
+      binding,
       command.command_id,
       "failed",
       null,
@@ -151,7 +165,7 @@ async function ackRelayCommand(
   result: unknown,
   error?: string
 ) {
-  await fetch(relayBaseUrl + "/api/local-masters/commands/" + encodeURIComponent(commandId) + "/ack", {
+  const response = await fetch(relayBaseUrl + "/api/local-masters/commands/" + encodeURIComponent(commandId) + "/ack", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + relayToken,
@@ -159,6 +173,24 @@ async function ackRelayCommand(
     },
     body: JSON.stringify({ status, result, error: error ?? null })
   });
+
+  if (!response.ok) {
+    throw new Error("Relay command ACK failed: " + response.status + " " + await readRelayError(response));
+  }
+}
+
+async function ackRelayCommandSafely(
+  binding: NonNullable<ReturnType<typeof getRelayRuntimeBinding>>,
+  commandId: string,
+  status: "accepted" | "failed",
+  result: unknown,
+  error?: string
+) {
+  try {
+    await ackRelayCommand(binding.relay_base_url, binding.relay_token, commandId, status, result, error);
+  } catch (ackError) {
+    console.warn("Relay command ACK failed.", ackError);
+  }
 }
 
 function validateRelayCommandBinding(
@@ -344,4 +376,13 @@ function required(value: unknown, message: string) {
   const normalized = typeof value === "string" ? value.trim() : "";
   if (!normalized) throw new Error(message);
   return normalized;
+}
+
+async function readRelayError(response: Response) {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    return payload.error ?? response.statusText;
+  } catch {
+    return (await response.text().catch(() => "")) || response.statusText;
+  }
 }
