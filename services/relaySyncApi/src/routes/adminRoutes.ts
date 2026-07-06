@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 
 import { requireAdminToken } from "../auth/adminAuth.js";
 import { createLocation, listLocations, updateLocation } from "../store/locationStore.js";
-import { createOutputStation, listOutputStations, updateOutputStation } from "../store/outputStationStore.js";
+import { createOutputStation, deleteOutputStation, listOutputStations, updateOutputStation } from "../store/outputStationStore.js";
 import { createLocalMasterPairingSession, getCurrentLocalMasterPairingSession, getOnboardingStatus } from "../store/provisioningStore.js";
 import { createTenant, listTenants, updateTenant } from "../store/tenantStore.js";
 import { createLocationUser, listLocationUsers, updateLocationUser } from "../store/userStore.js";
@@ -98,5 +98,15 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   }>(
     "/api/admin/tenants/:tenantId/locations/:locationId/output-stations/:stationId",
     async (request) => updateOutputStation(request.params.tenantId, request.params.locationId, request.params.stationId, request.body),
+  );
+
+  app.delete<{
+    Params: { tenantId: string; locationId: string; stationId: string };
+  }>(
+    "/api/admin/tenants/:tenantId/locations/:locationId/output-stations/:stationId",
+    async (request, reply) => {
+      await deleteOutputStation(request.params.tenantId, request.params.locationId, request.params.stationId);
+      return reply.code(204).send();
+    },
   );
 }

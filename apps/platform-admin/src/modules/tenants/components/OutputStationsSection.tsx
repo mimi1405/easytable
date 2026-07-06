@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 
 import { Badge } from "@easytable/ui/components/badge";
 import { Button } from "@easytable/ui/components/button";
@@ -15,9 +15,10 @@ type OutputStationsSectionProps = {
   onReload: () => void;
   onCreate: (input: OutputStationInput) => Promise<void>;
   onUpdate: (stationId: string, input: OutputStationInput) => Promise<void>;
+  onDelete: (stationId: string) => Promise<void>;
 };
 
-export function OutputStationsSection({ tenant, location, stations, isLoading, onReload, onCreate, onUpdate }: OutputStationsSectionProps) {
+export function OutputStationsSection({ tenant, location, stations, isLoading, onReload, onCreate, onUpdate, onDelete }: OutputStationsSectionProps) {
   const canManage = Boolean(tenant && location);
 
   return (
@@ -73,8 +74,19 @@ export function OutputStationsSection({ tenant, location, stations, isLoading, o
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-1">
                       <OutputStationFormDialog mode="edit" onSubmit={(input) => onUpdate(station.id, input)} station={station} />
+                      <Button
+                        variant="ghost"
+                        onClick={async () => {
+                          if (confirm(`Möchtest du die Station "${station.name}" wirklich löschen? Zugeordnete Produkte und Kategorien werden nicht gelöscht, aber deren Station wird auf NULL zurückgesetzt.`)) {
+                            await onDelete(station.id);
+                          }
+                        }}
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive h-8 w-8 p-0"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>

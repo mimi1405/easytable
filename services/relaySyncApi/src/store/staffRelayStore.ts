@@ -1,20 +1,20 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
+import type { IncomingHttpHeaders } from "node:http";
 
 import { and, eq } from "drizzle-orm";
+import { fromNodeHeaders } from "better-auth/node";
 
+import { auth } from "../auth.js";
 import { getDrizzleDatabase } from "../db/client.js";
-import { locations, relayCommands } from "../db/schema.js";
+import { locations, relayCommands, tenantUserLocations, tenantUsers, users } from "../db/schema.js";
 import { publishCommandEvent } from "../lib/nats.js";
 import type {
   RelayCommand,
-  StaffLoginRequest,
-  StaffLoginResponse,
   StaffOrderSnapshotRelayRequest,
   StaffRelayCommandResponse,
   TenantUserRole
 } from "../types.js";
 import { ApiError } from "./errors.js";
-import { authenticateLocationUserByPin } from "./userStore.js";
 
 type RelayCommandRow = typeof relayCommands.$inferSelect;
 
@@ -27,42 +27,12 @@ export type StaffSession = {
   exp: number;
 };
 
-const staffSessionTtlMs = 12 * 60 * 60 * 1000;
-
-export async function loginStaff(request: StaffLoginRequest): Promise<StaffLoginResponse> {
-  const tenantId = normalizeRequiredText(request.tenant_id, "Tenant is required.");
-  const locationId = normalizeRequiredText(request.location_id, "Location is required.");
-  const user = await authenticateLocationUserByPin(tenantId, locationId, request.email, request.pin);
-  const expiresAt = new Date(Date.now() + staffSessionTtlMs);
-  const session: StaffSession = {
-    tenant_id: tenantId,
-    location_id: locationId,
-    user_id: user.user_id,
-    display_name: user.display_name,
-    role: user.role,
-    exp: expiresAt.getTime()
-  };
-
-  return {
-    access_token: signStaffSession(session),
-    tenant_id: tenantId,
-    location_id: locationId,
-    user_id: user.user_id,
-    display_name: user.display_name,
-    role: user.role,
-    expires_at: expiresAt.toISOString()
-  };
-}
-
 export async function createStaffOrderRelayCommand(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   locationId: string,
   request: StaffOrderSnapshotRelayRequest
 ): Promise<StaffRelayCommandResponse> {
-  const session = requireStaffSession(authorization);
-  if (session.location_id !== locationId) {
-    throw new ApiError("Staff session does not belong to this location.", 403);
-  }
+  const session = await requireStaffSession(headers, locationId);
 
   const location = await requireRelayLocation(session.tenant_id, locationId);
   const requestId = normalizeRequiredText(request.request_id, "request_id is required.");
@@ -113,15 +83,12 @@ export async function createStaffOrderRelayCommand(
 }
 
 export async function createStaffPickupAcknowledgeRelayCommand(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   locationId: string,
   pickupId: string,
   request: { request_id?: string }
 ): Promise<StaffRelayCommandResponse> {
-  const session = requireStaffSession(authorization);
-  if (session.location_id !== locationId) {
-    throw new ApiError("Staff session does not belong to this location.", 403);
-  }
+  const session = await requireStaffSession(headers, locationId);
 
   const location = await requireRelayLocation(session.tenant_id, locationId);
   const normalizedPickupId = normalizeRequiredText(pickupId, "pickup_id is required.");
@@ -172,15 +139,12 @@ export async function createStaffPickupAcknowledgeRelayCommand(
 }
 
 export async function createKdsTicketStatusRelayCommand(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   locationId: string,
   ticketId: string,
   request: { request_id?: string; status?: string }
 ): Promise<StaffRelayCommandResponse> {
-  const session = requireStaffSession(authorization);
-  if (session.location_id !== locationId) {
-    throw new ApiError("Staff session does not belong to this location.", 403);
-  }
+  const session = await requireStaffSession(headers, locationId);
 
   const location = await requireRelayLocation(session.tenant_id, locationId);
   const normalizedTicketId = normalizeRequiredText(ticketId, "ticket_id is required.");
@@ -233,73 +197,83 @@ export async function createKdsTicketStatusRelayCommand(
 }
 
 export async function getStaffRelayCommand(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   commandId: string
 ): Promise<StaffRelayCommandResponse> {
-  const session = requireStaffSession(authorization);
-  const row = await getRelayCommand(session, commandId);
+  const row = (await getDrizzleDatabase()
+    .select()
+    .from(relayCommands)
+    .where(eq(relayCommands.id, commandId))
+    .limit(1))[0] ?? null;
 
   if (!row) {
+    throw new ApiError("Relay command not found.", 404);
+  }
+
+  const session = await requireStaffSession(headers, row.locationId);
+  if (session.tenant_id !== row.tenantId) {
     throw new ApiError("Relay command not found.", 404);
   }
 
   return toStaffRelayCommand(row);
 }
 
-export function requireStaffSession(authorization: string | undefined): StaffSession {
-  const token = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length).trim() : "";
-  if (!token) {
+export async function requireStaffSession(headers: IncomingHttpHeaders, locationId?: string): Promise<StaffSession> {
+  const session = await auth.api.getSession({
+    headers: fromNodeHeaders(headers),
+  });
+
+  if (!session) {
     throw new ApiError("Staff session is required.", 401);
   }
 
-  const devSession = readDevStaffSession(token);
-  if (devSession) {
-    return devSession;
+  const db = getDrizzleDatabase();
+  const filters = [
+    eq(tenantUserLocations.userId, session.user.id),
+    eq(tenantUserLocations.isActive, 1),
+  ];
+  if (locationId) {
+    filters.push(eq(tenantUserLocations.locationId, locationId));
   }
 
-  const [encodedPayload, signature] = token.split(".");
-  if (!encodedPayload || !signature) {
-    throw new ApiError("Staff session is invalid.", 401);
+  const rows = await db
+    .select({
+      tenantId: tenantUserLocations.tenantId,
+      locationId: tenantUserLocations.locationId,
+      role: tenantUsers.role,
+      displayName: users.name,
+      status: users.status,
+    })
+    .from(tenantUserLocations)
+    .innerJoin(
+      tenantUsers,
+      and(
+        eq(tenantUsers.tenantId, tenantUserLocations.tenantId),
+        eq(tenantUsers.userId, tenantUserLocations.userId)
+      )
+    )
+    .innerJoin(users, eq(users.id, tenantUserLocations.userId))
+    .where(and(...filters))
+    .limit(1);
+
+  const relation = rows[0];
+  if (!relation || relation.status !== "ACTIVE") {
+    throw new ApiError("Staff session does not have access to this location.", 403);
   }
 
-  const expectedSignature = sign(encodedPayload);
-  const actual = Buffer.from(signature, "base64url");
-  const expected = Buffer.from(expectedSignature, "base64url");
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw new ApiError("Staff session is invalid.", 401);
+  const role = relation.role as TenantUserRole;
+  if (role !== "OWNER" && role !== "MANAGER" && role !== "STAFF" && role !== "KDS") {
+    throw new ApiError("Staff session role is not allowed for this location.", 403);
   }
 
-  const session = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as Partial<StaffSession>;
-  if (!session.tenant_id || !session.location_id || !session.user_id || !session.role || !session.exp || session.exp <= Date.now()) {
-    throw new ApiError("Staff session is expired or invalid.", 401);
-  }
-
-  return session as StaffSession;
-}
-
-function readDevStaffSession(token: string): StaffSession | null {
-  if (process.env.RELAY_DEV_AUTH_DISABLED !== "1" || !token.startsWith("dev.")) {
-    return null;
-  }
-
-  try {
-    const encodedPayload = token.slice("dev.".length);
-    const session = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as Partial<StaffSession>;
-    if (!session.tenant_id || !session.location_id || !session.user_id || !session.role) {
-      throw new Error("Dev relay context is incomplete.");
-    }
-
-    return {
-      tenant_id: session.tenant_id,
-      location_id: session.location_id,
-      user_id: session.user_id,
-      display_name: session.display_name ?? "Dev User",
-      role: session.role,
-      exp: session.exp ?? Date.now() + staffSessionTtlMs
-    };
-  } catch {
-    throw new ApiError("Dev staff relay context is invalid.", 401);
-  }
+  return {
+    tenant_id: relation.tenantId,
+    location_id: relation.locationId,
+    user_id: session.user.id,
+    display_name: relation.displayName,
+    role,
+    exp: new Date(session.session.expiresAt).getTime()
+  };
 }
 
 export async function requireRelayLocation(tenantId: string, locationId: string) {
@@ -361,19 +335,6 @@ function toRelayCommand(row: RelayCommandRow): RelayCommand {
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString()
   };
-}
-
-function signStaffSession(session: StaffSession) {
-  const encodedPayload = Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
-  return encodedPayload + "." + sign(encodedPayload);
-}
-
-function sign(encodedPayload: string) {
-  return createHmac("sha256", staffSessionSecret()).update(encodedPayload).digest("base64url");
-}
-
-function staffSessionSecret() {
-  return process.env.STAFF_SESSION_SECRET ?? process.env.ADMIN_API_TOKEN ?? "easytable-dev-staff-session-secret";
 }
 
 function commandIdForStaffOrder(tenantId: string, locationId: string, requestId: string) {

@@ -5,7 +5,6 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 
-import { seedRelaySyncDevData } from "./devSeed.js";
 import * as schema from "./schema.js";
 
 const { Pool } = pg;
@@ -19,7 +18,6 @@ export async function initializeDatabase() {
 
   if (!hasMigrated) {
     await migrate(database, { migrationsFolder: resolveRelaySyncApiPath("drizzle") });
-    await seedRelaySyncDevData(database);
     hasMigrated = true;
   }
 }

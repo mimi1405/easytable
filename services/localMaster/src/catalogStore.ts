@@ -172,8 +172,10 @@ export function listCatalogOutputStations(): CatalogOutputStation[] {
 export function applyBootstrapOutputStations(stations: CatalogOutputStation[]) {
   const db = getDrizzleDatabase();
   const now = Date.now();
+  const bootstrapStationIds = new Set(stations.map((s) => s.id));
 
   db.transaction((tx) => {
+    // Upsert all stations from the bootstrap payload
     for (const station of stations) {
       const kind = normalizeStationKind(station);
       tx.insert(catalogOutputStations)
@@ -202,6 +204,36 @@ export function applyBootstrapOutputStations(stations: CatalogOutputStation[]) {
             updatedAt: now
           }
         })
+        .run();
+    }
+
+    // Deactivate stations that are no longer present in the bootstrap
+    const allLocalStations = tx
+      .select({ id: catalogOutputStations.id })
+      .from(catalogOutputStations)
+      .all();
+
+    const removedStationIds = allLocalStations
+      .map((s) => s.id)
+      .filter((id) => !bootstrapStationIds.has(id));
+
+    for (const removedId of removedStationIds) {
+      // Nullify references in catalog_products
+      tx.update(catalogProducts)
+        .set({ stationId: null, updatedAt: now })
+        .where(eq(catalogProducts.stationId, removedId))
+        .run();
+
+      // Nullify references in catalog_categories
+      tx.update(catalogCategories)
+        .set({ defaultStationId: null, updatedAt: now })
+        .where(eq(catalogCategories.defaultStationId, removedId))
+        .run();
+
+      // Deactivate the station
+      tx.update(catalogOutputStations)
+        .set({ isActive: 0, updatedAt: now })
+        .where(eq(catalogOutputStations.id, removedId))
         .run();
     }
   });
@@ -479,16 +511,7 @@ const taxSelectFields = {
 };
 
 function ensureCatalogSeeded() {
-  ensureOutputStationsSeeded();
-
-  const row = getDrizzleDatabase().select({ count: count() }).from(catalogCategories).get();
-
-  if ((row?.count ?? 0) === 0) {
-    seedCategoriesAndProducts();
-  }
-
-  ensureTaxesSeeded();
-  backfillProductTaxIds();
+  // Runtime seeding completely disabled
 }
 
 function seedCategoriesAndProducts() {
@@ -531,6 +554,11 @@ function seedCategoriesAndProducts() {
 
 function ensureOutputStationsSeeded() {
   const db = getDrizzleDatabase();
+  const countRow = db.select({ count: count() }).from(catalogOutputStations).get();
+  if ((countRow?.count ?? 0) > 0) {
+    return;
+  }
+
   const now = Date.now();
 
   for (const station of defaultOutputStations) {

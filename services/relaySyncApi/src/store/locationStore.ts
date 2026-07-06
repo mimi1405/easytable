@@ -5,6 +5,7 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { getDrizzleDatabase } from "../db/client.js";
 import { locations, tenants } from "../db/schema.js";
 import type { Location, LocationCreateRequest, LocationServiceMode, LocationStatus, LocationUpdateRequest } from "../types.js";
+import { triggerLocalMasterBootstrapRefresh } from "./adminSync.js";
 import { ApiError } from "./errors.js";
 
 type LocationRow = typeof locations.$inferSelect;
@@ -75,6 +76,7 @@ export async function updateLocation(tenantId: string, locationId: string, reque
     .where(and(eq(locations.tenantId, tenantId), eq(locations.id, locationId)))
     .returning();
 
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
   return toLocation(rows[0]);
 }
 

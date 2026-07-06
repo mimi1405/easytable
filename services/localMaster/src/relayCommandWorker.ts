@@ -145,6 +145,13 @@ async function executeRelayCommand(command: RelayCommand, binding: NonNullable<R
       return;
     }
 
+    if (command.type === "ADMIN_BOOTSTRAP_REFRESH") {
+      await retryCloudBootstrap();
+      await ackRelayCommandSafely(binding, command.command_id, "accepted", { refreshed: true });
+      broadcast("BOOTSTRAP_REFRESHED", {});
+      return;
+    }
+
     throw new Error("Unsupported relay command type: " + command.type);
   } catch (error) {
     await ackRelayCommandSafely(

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "db:generate": "drizzle-kit generate",
+    "admin:ensure": "tsx src/scripts/ensurePlatformAdmin.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },

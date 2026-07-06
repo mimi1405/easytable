@@ -6,7 +6,8 @@ replication:
 
 storage:
   type: postgresql
-  uri: postgresql://easytable:easytable@postgres:5432/easytable
+  uri: postgresql://easytable:easytable@postgres:5432/powersync_storage
+  sslmode: disable
 
 client_auth:
   jwks:
@@ -18,3 +19,8 @@ client_auth:
 
 sync_config:
   path: /config/sync-config.yaml
+
+system:
+  logging:
+    level: debug
+    format: text

@@ -5,6 +5,6 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgres://easytable:easytable@localhost:5432/easytable"
+    url: process.env.DATABASE_URL ?? "postgres://easytable:easytable@localhost:5435/easytable"
   }
 });

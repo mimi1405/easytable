@@ -1,4 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
+import type { IncomingHttpHeaders } from "node:http";
 
 import { getDrizzleDatabase } from "../db/client.js";
 import { layoutAreas, layoutFloors, layoutTables, locations, tenants } from "../db/schema.js";
@@ -75,11 +76,8 @@ export async function replaceLocalMasterTableLayout(relayToken: string, snapshot
   return getRelayTableLayout(credential.tenantId, credential.locationId);
 }
 
-export async function getStaffTableLayout(authorization: string | undefined, locationId: string): Promise<TableLayout> {
-  const session = requireStaffSession(authorization);
-  if (session.location_id !== locationId) {
-    throw new ApiError("Staff session does not belong to this location.", 403);
-  }
+export async function getStaffTableLayout(headers: IncomingHttpHeaders, locationId: string): Promise<TableLayout> {
+  const session = await requireStaffSession(headers, locationId);
 
   return getRelayTableLayout(session.tenant_id, locationId);
 }

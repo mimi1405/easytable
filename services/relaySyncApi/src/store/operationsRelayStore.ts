@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
+import type { IncomingHttpHeaders } from "node:http";
 
 import { getDrizzleDatabase } from "../db/client.js";
 import { kdsTickets, orderItems, orders, stationPickups } from "../db/schema.js";
@@ -148,14 +149,11 @@ export async function replaceLocalMasterOperations(
 }
 
 export async function getRelayOpenTableOrderBasket(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   locationId: string,
   tableId: string
 ): Promise<OpenTableOrderBasket | null> {
-  const session = requireStaffSession(authorization);
-  if (session.location_id !== locationId) {
-    throw new ApiError("Staff session does not belong to this location.", 403);
-  }
+  const session = await requireStaffSession(headers, locationId);
 
   await requireRelayLocation(session.tenant_id, locationId);
   const order = await findOpenTableOrder(session.tenant_id, locationId, tableId);
@@ -171,14 +169,11 @@ export async function getRelayOpenTableOrderBasket(
 }
 
 export async function listRelayStationPickups(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   locationId: string,
   status: StationPickupStatus | "ALL" = "READY"
 ): Promise<StationPickup[]> {
-  const session = requireStaffSession(authorization);
-  if (session.location_id !== locationId) {
-    throw new ApiError("Staff session does not belong to this location.", 403);
-  }
+  const session = await requireStaffSession(headers, locationId);
 
   await requireRelayLocation(session.tenant_id, locationId);
   const where = status === "ALL"
@@ -194,14 +189,11 @@ export async function listRelayStationPickups(
 }
 
 export async function listRelayKdsTickets(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   locationId: string,
   station?: string
 ): Promise<KdsTicket[]> {
-  const session = requireStaffSession(authorization);
-  if (session.location_id !== locationId) {
-    throw new ApiError("Staff session does not belong to this location.", 403);
-  }
+  const session = await requireStaffSession(headers, locationId);
 
   await requireRelayLocation(session.tenant_id, locationId);
   const normalizedStation = station?.trim() ?? "";

@@ -1,6 +1,5 @@
 bucket_definitions:
   all_data:
-    parameters: SELECT 'global' as id
     data:
       - SELECT * FROM tenants
       - SELECT * FROM locations

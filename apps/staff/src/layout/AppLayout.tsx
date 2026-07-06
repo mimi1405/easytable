@@ -52,7 +52,7 @@ const ownerCatalogItems: Array<{
   { section: "products", label: "Produkte", icon: Package },
   { section: "categories", label: "Kategorien", icon: Tags },
   { section: "taxes", label: "Steuern", icon: Percent },
-  { section: "locations", label: "Standorte", icon: Building2 },
+  { section: "locations", label: "Tischverwaltung", icon: Building2 },
 ];
 
 const staffItems: Array<{

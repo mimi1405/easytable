@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { IncomingHttpHeaders } from "node:http";
 
 import { and, asc, eq, sql } from "drizzle-orm";
 
@@ -106,37 +107,37 @@ export async function replaceLocalMasterCatalog(relayToken: string, snapshot: Ow
   return getCatalogSnapshot(credential.tenantId, credential.locationId);
 }
 
-export async function getStaffProducts(authorization: string | undefined, locationId: string): Promise<CatalogProduct[]> {
-  const session = requireStaffSession(authorization);
+export async function getStaffProducts(headers: IncomingHttpHeaders, locationId: string): Promise<CatalogProduct[]> {
+  const session = await requireStaffSession(headers, locationId);
   requireSessionLocation(session, locationId);
   return (await getCatalogSnapshot(session.tenant_id, locationId)).products.filter((product) => product.is_available);
 }
 
-export async function getStaffOutputStations(authorization: string | undefined, locationId: string): Promise<CatalogOutputStation[]> {
-  const session = requireStaffSession(authorization);
+export async function getStaffOutputStations(headers: IncomingHttpHeaders, locationId: string): Promise<CatalogOutputStation[]> {
+  const session = await requireStaffSession(headers, locationId);
   requireSessionLocation(session, locationId);
   return (await getCatalogSnapshot(session.tenant_id, locationId)).output_stations.filter((station) => station.is_active);
 }
 
-export async function getStaffProductVariantGroups(authorization: string | undefined, locationId: string, _productId: string) {
-  const session = requireStaffSession(authorization);
+export async function getStaffProductVariantGroups(headers: IncomingHttpHeaders, locationId: string, _productId: string) {
+  const session = await requireStaffSession(headers, locationId);
   requireSessionLocation(session, locationId);
   return [];
 }
 
-export async function getOwnerCatalog(authorization: string | undefined, locationId: string): Promise<OwnerCatalogSnapshot> {
-  const session = requireStaffSession(authorization);
+export async function getOwnerCatalog(headers: IncomingHttpHeaders, locationId: string): Promise<OwnerCatalogSnapshot> {
+  const session = await requireStaffSession(headers, locationId);
   requireOwnerRole(session.role);
   requireSessionLocation(session, locationId);
   return getCatalogSnapshot(session.tenant_id, locationId);
 }
 
 export async function createOwnerCatalogCommand(
-  authorization: string | undefined,
+  headers: IncomingHttpHeaders,
   locationId: string,
   request: OwnerCatalogCommandRequest
 ): Promise<StaffRelayCommandResponse> {
-  const session = requireStaffSession(authorization);
+  const session = await requireStaffSession(headers, locationId);
   requireOwnerRole(session.role);
   requireSessionLocation(session, locationId);
   const location = await requireRelayLocation(session.tenant_id, locationId);

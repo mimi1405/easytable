@@ -6,6 +6,7 @@ import {
   createLocationUser,
   createLocalMasterPairingSession,
   createOutputStation,
+  deleteOutputStation,
   createTenant,
   getRelaySyncApiUrl,
   loadCurrentLocalMasterPairingSession,
@@ -295,6 +296,11 @@ export function TenantsPage() {
         onUpdate={(stationId, input) =>
           runStationAction(async () =>
             void (await updateOutputStation(selectedTenant?.id ?? "", selectedLocation?.id ?? "", stationId, input))
+          )
+        }
+        onDelete={(stationId) =>
+          runStationAction(async () =>
+            void (await deleteOutputStation(selectedTenant?.id ?? "", selectedLocation?.id ?? "", stationId))
           )
         }
         stations={outputStations}

@@ -1,4 +1,4 @@
-﻿export type PosProduct = {
+export type PosProduct = {
   id: string;
   product_type: "BASIC" | "SERVICE";
   name: string;
@@ -694,6 +694,7 @@ export type RealtimeEventType =
   | "DEVICE_CONFIG_UPDATED"
   | "DEVICE_DISCONNECTED"
   | "INVALID_MESSAGE"
+  | "BOOTSTRAP_REFRESHED"
   | "CATALOG_UPDATED"
   | "ORDER_CREATED"
   | "KDS_TICKET_CREATED"

@@ -1,20 +1,24 @@
-import { pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { pbkdf2Sync, randomBytes } from "node:crypto";
 
+import { hashPassword } from "better-auth/crypto";
 import { and, eq, sql } from "drizzle-orm";
 
+import { auth } from "../auth.js";
 import { getDrizzleDatabase } from "../db/client.js";
-import { locations, tenantUserLocations, tenantUsers, tenants, users } from "../db/schema.js";
+import { accounts, locations, tenantUserLocations, tenantUsers, tenants, users } from "../db/schema.js";
 import type {
   TenantLocationUser,
   TenantLocationUserCreateRequest,
   TenantLocationUserUpdateRequest,
   TenantUserRole
 } from "../types.js";
+import { triggerLocalMasterBootstrapRefresh } from "./adminSync.js";
 import { ApiError } from "./errors.js";
 
 type UserRow = typeof users.$inferSelect;
 type TenantUserRow = typeof tenantUsers.$inferSelect;
 type TenantUserLocationRow = typeof tenantUserLocations.$inferSelect;
+type LocationUserRow = { user: UserRow; tenantUser: TenantUserRow; locationUser: TenantUserLocationRow; hasPassword: boolean };
 
 const allowedRoles: TenantUserRole[] = ["OWNER", "MANAGER", "STAFF", "KDS", "POS_OPERATOR"];
 
@@ -22,7 +26,9 @@ export async function listLocationUsers(tenantId: string, locationId: string): P
   await requireLocation(tenantId, locationId);
   const rows = await getLocationUserRows(tenantId, locationId);
 
-  return rows.map(({ user, tenantUser, locationUser }) => toTenantLocationUser(tenantId, locationId, user, tenantUser, locationUser));
+  return rows.map(({ user, tenantUser, locationUser, hasPassword }) =>
+    toTenantLocationUser(tenantId, locationId, user, tenantUser, locationUser, hasPassword)
+  );
 }
 
 export async function createLocationUser(
@@ -34,36 +40,49 @@ export async function createLocationUser(
   const input = normalizeUserInput(request, true);
   const now = new Date();
   const db = getDrizzleDatabase();
+  const passwordHash = input.password !== undefined ? await hashPassword(input.password) : undefined;
   const existingUsers = await db
     .select()
     .from(users)
     .where(sql`lower(${users.email}) = lower(${input.email})`)
     .limit(1);
-  const userId = existingUsers[0]?.id ?? "user_" + randomUUID();
+  let userId = existingUsers[0]?.id;
+
+  if (!userId) {
+    await auth.api.signUpEmail({
+      body: {
+        email: input.email,
+        password: input.password ?? "",
+        name: input.display_name,
+      },
+    });
+
+    const createdUsers = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = lower(${input.email})`)
+      .limit(1);
+
+    userId = createdUsers[0]?.id;
+  }
+
+  if (!userId) {
+    throw new ApiError("Better Auth user could not be created.", 500);
+  }
 
   await db.transaction(async (tx) => {
-    if (existingUsers[0]) {
-      await tx
-        .update(users)
-        .set({
-          name: input.display_name,
-          passwordHash: input.password === undefined ? existingUsers[0].passwordHash : hashSecret(input.password),
-          status: input.status,
-          updatedAt: now,
-        })
-        .where(eq(users.id, userId));
-    } else {
-      await tx
-        .insert(users)
-        .values({
-          id: userId,
-          email: input.email,
-          name: input.display_name,
-          passwordHash: input.password === undefined ? null : hashSecret(input.password),
-          status: input.status,
-          createdAt: now,
-          updatedAt: now,
-        });
+    await tx
+      .update(users)
+      .set({
+        email: input.email,
+        name: input.display_name,
+        status: input.status,
+        updatedAt: now,
+      })
+      .where(eq(users.id, userId));
+
+    if (passwordHash !== undefined) {
+      await upsertCredentialPassword(tx, userId, passwordHash, now);
     }
 
     await tx
@@ -101,7 +120,9 @@ export async function createLocationUser(
       });
   });
 
-  return requireLocationUser(tenantId, locationId, userId);
+  const result = await requireLocationUser(tenantId, locationId, userId);
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+  return result;
 }
 
 export async function updateLocationUser(
@@ -121,6 +142,7 @@ export async function updateLocationUser(
     is_active: request.is_active ?? current.locationUser.isActive === 1,
   }, false);
   const now = new Date();
+  const passwordHash = input.password !== undefined ? await hashPassword(input.password) : undefined;
 
   await getDrizzleDatabase().transaction(async (tx) => {
     await tx
@@ -128,7 +150,6 @@ export async function updateLocationUser(
       .set({
         email: input.email,
         name: input.display_name,
-        passwordHash: input.password === undefined ? current.user.passwordHash : hashSecret(input.password),
         status: input.status,
         updatedAt: now,
       })
@@ -151,9 +172,15 @@ export async function updateLocationUser(
         eq(tenantUserLocations.locationId, locationId),
         eq(tenantUserLocations.userId, userId)
       ));
+
+    if (passwordHash !== undefined) {
+      await upsertCredentialPassword(tx, userId, passwordHash, now);
+    }
   });
 
-  return requireLocationUser(tenantId, locationId, userId);
+  const result = await requireLocationUser(tenantId, locationId, userId);
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+  return result;
 }
 
 export async function listBootstrapUsers(tenantId: string, locationId: string) {
@@ -170,36 +197,6 @@ export async function listBootstrapUsers(tenantId: string, locationId: string) {
   }));
 }
 
-export async function authenticateLocationUserByPin(tenantId: string, locationId: string, email: string, pin: string) {
-  await requireLocation(tenantId, locationId);
-  const normalizedEmail = email.trim().toLowerCase();
-  const normalizedPin = pin.trim();
-  const rows = await getLocationUserRows(tenantId, locationId);
-  const row = rows.find(({ user }) => user.email.toLowerCase() === normalizedEmail);
-
-  if (!row || row.user.status !== "ACTIVE" || row.locationUser.isActive !== 1) {
-    throw new ApiError("Invalid staff credentials.", 401);
-  }
-
-  const role = row.tenantUser.role as TenantUserRole;
-  if (role !== "STAFF" && role !== "MANAGER" && role !== "OWNER") {
-    throw new ApiError("User is not allowed to use Staff relay.", 403);
-  }
-
-  if (!row.locationUser.pinHash || !verifySecret(normalizedPin, row.locationUser.pinHash)) {
-    throw new ApiError("Invalid staff credentials.", 401);
-  }
-
-  return {
-    user_id: row.user.id,
-    tenant_id: tenantId,
-    location_id: locationId,
-    email: row.user.email,
-    display_name: row.user.name,
-    role,
-  };
-}
-
 async function requireLocationUser(tenantId: string, locationId: string, userId: string) {
   const rows = await getLocationUserRows(tenantId, locationId, userId);
   const row = rows[0];
@@ -208,7 +205,7 @@ async function requireLocationUser(tenantId: string, locationId: string, userId:
     throw new ApiError("User not found for location.", 404);
   }
 
-  return toTenantLocationUser(tenantId, locationId, row.user, row.tenantUser, row.locationUser);
+  return toTenantLocationUser(tenantId, locationId, row.user, row.tenantUser, row.locationUser, row.hasPassword);
 }
 
 async function requireLocationUserRows(tenantId: string, locationId: string, userId: string) {
@@ -233,7 +230,7 @@ async function getLocationUserRows(tenantId: string, locationId: string, userId?
       userId ? eq(tenantUserLocations.userId, userId) : sql`true`
     ));
 
-  const result: Array<{ user: UserRow; tenantUser: TenantUserRow; locationUser: TenantUserLocationRow }> = [];
+  const result: LocationUserRow[] = [];
 
   for (const locationUser of locationRows) {
     const user = (await db.select().from(users).where(eq(users.id, locationUser.userId)).limit(1))[0];
@@ -242,9 +239,14 @@ async function getLocationUserRows(tenantId: string, locationId: string, userId?
       .from(tenantUsers)
       .where(and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, locationUser.userId)))
       .limit(1))[0];
+    const credentialAccount = (await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(and(eq(accounts.userId, locationUser.userId), eq(accounts.providerId, "credential")))
+      .limit(1))[0];
 
     if (user && tenantUser) {
-      result.push({ user, tenantUser, locationUser });
+      result.push({ user, tenantUser, locationUser, hasPassword: Boolean(credentialAccount) });
     }
   }
 
@@ -325,17 +327,35 @@ function hashSecret(secret: string) {
   return "pbkdf2_sha256$120000$" + salt + "$" + hash;
 }
 
-function verifySecret(secret: string, storedHash: string) {
-  const [algorithm, iterationsValue, salt, expectedHash] = storedHash.split("$");
-  const iterations = Number(iterationsValue);
+async function upsertCredentialPassword(
+  tx: ReturnType<typeof getDrizzleDatabase>,
+  userId: string,
+  passwordHash: string,
+  now: Date
+) {
+  const existingAccount = (await tx
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.userId, userId), eq(accounts.providerId, "credential")))
+    .limit(1))[0];
 
-  if (algorithm !== "pbkdf2_sha256" || !Number.isInteger(iterations) || !salt || !expectedHash) {
-    return false;
+  if (existingAccount) {
+    await tx
+      .update(accounts)
+      .set({ password: passwordHash, updatedAt: now })
+      .where(eq(accounts.id, existingAccount.id));
+    return;
   }
 
-  const actual = pbkdf2Sync(secret, salt, iterations, 32, "sha256");
-  const expected = Buffer.from(expectedHash, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  await tx.insert(accounts).values({
+    id: randomBytes(16).toString("hex"),
+    accountId: userId,
+    providerId: "credential",
+    userId,
+    password: passwordHash,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 function toTenantLocationUser(
@@ -343,7 +363,8 @@ function toTenantLocationUser(
   locationId: string,
   user: UserRow,
   tenantUser: TenantUserRow,
-  locationUser: TenantUserLocationRow
+  locationUser: TenantUserLocationRow,
+  hasPassword: boolean
 ): TenantLocationUser {
   return {
     user_id: user.id,
@@ -353,7 +374,7 @@ function toTenantLocationUser(
     display_name: user.name,
     role: tenantUser.role as TenantUserRole,
     status: user.status,
-    has_password: Boolean(user.passwordHash),
+    has_password: hasPassword,
     has_pin: Boolean(locationUser.pinHash),
     is_active: locationUser.isActive === 1,
     created_at: locationUser.createdAt.toISOString(),

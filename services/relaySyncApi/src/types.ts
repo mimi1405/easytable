@@ -155,23 +155,6 @@ export type RelayCommandAckRequest = {
   error?: string | null;
 };
 
-export type StaffLoginRequest = {
-  tenant_id: string;
-  location_id: string;
-  email: string;
-  pin: string;
-};
-
-export type StaffLoginResponse = {
-  access_token: string;
-  tenant_id: string;
-  location_id: string;
-  user_id: string;
-  display_name: string;
-  role: TenantUserRole;
-  expires_at: string;
-};
-
 export type StaffOrderSnapshotRelayRequest = {
   request_id: string;
   lines: unknown[];

@@ -3,12 +3,13 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 
 import { getDrizzleDatabase } from "../db/client.js";
-import { catalogOutputStations, locations, tenants } from "../db/schema.js";
+import { catalogCategories, catalogOutputStations, catalogProducts, locations, tenants } from "../db/schema.js";
 import type {
   CatalogOutputStation,
   CatalogOutputStationCreateRequest,
   CatalogOutputStationUpdateRequest
 } from "../types.js";
+import { triggerLocalMasterBootstrapRefresh } from "./adminSync.js";
 import { ApiError } from "./errors.js";
 
 type CatalogOutputStationRow = typeof catalogOutputStations.$inferSelect;
@@ -52,6 +53,7 @@ export async function createOutputStation(
     })
     .returning();
 
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
   return toOutputStation(rows[0]);
 }
 
@@ -94,8 +96,58 @@ export async function updateOutputStation(
     )
     .returning();
 
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
   return toOutputStation(rows[0]);
 }
+
+export async function deleteOutputStation(
+  tenantId: string,
+  locationId: string,
+  stationId: string
+): Promise<void> {
+  await requireOutputStation(tenantId, locationId, stationId);
+  const db = getDrizzleDatabase();
+
+  await db.transaction(async (tx) => {
+    // Nullify references in catalog_products
+    await tx
+      .update(catalogProducts)
+      .set({ stationId: null })
+      .where(
+        and(
+          eq(catalogProducts.tenantId, tenantId),
+          eq(catalogProducts.locationId, locationId),
+          eq(catalogProducts.stationId, stationId)
+        )
+      );
+
+    // Nullify references in catalog_categories
+    await tx
+      .update(catalogCategories)
+      .set({ defaultStationId: null })
+      .where(
+        and(
+          eq(catalogCategories.tenantId, tenantId),
+          eq(catalogCategories.locationId, locationId),
+          eq(catalogCategories.defaultStationId, stationId)
+        )
+      );
+
+    // Delete the station itself
+    await tx
+      .delete(catalogOutputStations)
+      .where(
+        and(
+          eq(catalogOutputStations.tenantId, tenantId),
+          eq(catalogOutputStations.locationId, locationId),
+          eq(catalogOutputStations.id, stationId)
+        )
+      );
+  });
+
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+}
+
 
 async function requireTenant(tenantId: string) {
   const rows = await getDrizzleDatabase().select({ id: tenants.id }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);

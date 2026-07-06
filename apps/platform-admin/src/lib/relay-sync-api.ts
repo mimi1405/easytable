@@ -256,6 +256,18 @@ export function updateOutputStation(tenantId: string, locationId: string, statio
   );
 }
 
+export async function deleteOutputStation(tenantId: string, locationId: string, stationId: string): Promise<void> {
+  const response = await fetch(
+    `${getRelaySyncApiUrl()}/api/admin/tenants/${encodeURIComponent(tenantId)}/locations/${encodeURIComponent(locationId)}/output-stations/${encodeURIComponent(stationId)}`,
+    {
+      method: "DELETE",
+      headers: createHeaders(),
+    }
+  );
+  await parseJsonResponse(response, undefined);
+}
+
+
 async function readJson<T>(path: string, fallback: T): Promise<T> {
   const response = await fetch(`${getRelaySyncApiUrl()}${path}`, {
     headers: createHeaders(),

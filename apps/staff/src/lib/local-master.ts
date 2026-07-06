@@ -152,23 +152,6 @@ export type CreatedOrderSnapshot = {
 
 export type ConnectionMode = "LOCAL" | "RELAY" | "OFFLINE";
 
-export type StaffRelayLoginRequest = {
-  tenant_id: string;
-  location_id: string;
-  email: string;
-  pin: string;
-};
-
-export type StaffRelayLoginResponse = {
-  access_token: string;
-  tenant_id: string;
-  location_id: string;
-  user_id: string;
-  display_name: string;
-  role: string;
-  expires_at: string;
-};
-
 export type StaffRelayCommand = {
   command_id: string;
   status: "pending" | "delivered" | "accepted" | "failed";
@@ -353,13 +336,7 @@ type LocalMasterIdentity = {
 
 const configuredUrl = import.meta.env.VITE_LOCAL_REALTIME_URL as string | undefined;
 const configuredRelayUrl = import.meta.env.VITE_RELAY_SYNC_URL as string | undefined;
-const configuredStaffRelayToken = import.meta.env.VITE_STAFF_RELAY_TOKEN as string | undefined;
-const configuredRelayTenantId = import.meta.env.VITE_RELAY_TENANT_ID as string | undefined;
 const configuredRelayLocationId = import.meta.env.VITE_RELAY_LOCATION_ID as string | undefined;
-const configuredRelayUserId = import.meta.env.VITE_RELAY_USER_ID as string | undefined;
-const configuredRelayDisplayName = import.meta.env.VITE_RELAY_DISPLAY_NAME as string | undefined;
-const configuredRelayRole = import.meta.env.VITE_RELAY_ROLE as string | undefined;
-const staffRelayTokenKey = "easytable.staffRelayToken";
 
 export function getLocalMasterUrl() {
   if (configuredUrl) {
@@ -378,7 +355,7 @@ export async function detectConnectionMode(): Promise<ConnectionMode> {
     return "LOCAL";
   }
 
-  return getRelaySyncUrl() && getStaffRelayToken() ? "RELAY" : "OFFLINE";
+  return getRelaySyncUrl() && configuredRelayLocationId ? "RELAY" : "OFFLINE";
 }
 
 export async function canReachLocalMaster() {
@@ -391,9 +368,7 @@ export async function canReachExpectedLocalMaster() {
     return false;
   }
 
-  const token = getStaffRelayToken();
-  const session = readStaffRelaySession(token);
-  if (session?.location_id && identity.location_id !== session.location_id) {
+  if (configuredRelayLocationId && identity.location_id !== configuredRelayLocationId) {
     return false;
   }
 
@@ -461,16 +436,10 @@ export function loadTableLayoutForConnection(connectionMode: ConnectionMode) {
 }
 
 export function loadRelayTableLayout() {
-  const token = getStaffRelayToken();
-  const session = readStaffRelaySession(token);
-
-  if (!token || !session?.location_id) {
-    throw new Error("Staff Relay Session fehlt oder ist ungueltig.");
-  }
+  const locationId = requireStaffRelayLocationId();
 
   return readRelayJson<TableLayout>(
-    "/api/staff/locations/" + encodeURIComponent(session.location_id) + "/table-layout",
-    token,
+    "/api/staff/locations/" + encodeURIComponent(locationId) + "/table-layout",
   );
 }
 
@@ -496,9 +465,8 @@ export function loadProductsForConnection(connectionMode: ConnectionMode) {
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
-    return readRelayJson<StaffProduct[]>("/api/staff/locations/" + encodeURIComponent(locationId) + "/products", token);
+    const locationId = requireStaffRelayLocationId();
+    return readRelayJson<StaffProduct[]>("/api/staff/locations/" + encodeURIComponent(locationId) + "/products");
   }
 
   throw new Error(describeConnectionUnavailable());
@@ -514,11 +482,9 @@ export function loadProductVariantGroupsForConnection(connectionMode: Connection
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     return readRelayJson<ProductVariantGroup[]>(
       "/api/staff/locations/" + encodeURIComponent(locationId) + "/product-variant-groups/" + encodeURIComponent(productId),
-      token,
     );
   }
 
@@ -535,11 +501,9 @@ export function loadOpenTableOrderBasketForConnection(connectionMode: Connection
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     return readRelayJson<OpenTableOrderBasket | null>(
       "/api/staff/locations/" + encodeURIComponent(locationId) + "/tables/" + encodeURIComponent(tableId) + "/open-basket",
-      token,
     );
   }
 
@@ -575,84 +539,23 @@ export async function createOrderSnapshotForConnection(
   return createRelayOrderSnapshot(requestWithId);
 }
 
-export async function loginStaffRelay(input: StaffRelayLoginRequest) {
-  const relayUrl = requireRelaySyncUrl();
-  const response = await fetch(`${relayUrl}/api/staff/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const payload = await parseJsonResponse<StaffRelayLoginResponse>(response, undefined as unknown as StaffRelayLoginResponse);
-  window.localStorage.setItem(staffRelayTokenKey, payload.access_token);
-  return payload;
-}
-
-export function setStaffRelayToken(token: string) {
-  window.localStorage.setItem(staffRelayTokenKey, token);
-}
-
-export function getStaffRelayToken() {
-  const configuredDevToken = getConfiguredDevRelayToken();
-  return configuredDevToken || window.localStorage.getItem(staffRelayTokenKey) || configuredStaffRelayToken || "";
-}
-
 export function describeConnectionUnavailable() {
   if (!getRelaySyncUrl()) {
     return "LocalMaster nicht erreichbar und Relay-URL fehlt.";
   }
 
-  if (!getStaffRelayToken()) {
-    return "LocalMaster nicht erreichbar und Staff Relay Token fehlt.";
+  if (!configuredRelayLocationId) {
+    return "LocalMaster nicht erreichbar und Relay-Location fehlt.";
   }
 
   return "Keine Verbindung zu LocalMaster oder Relay.";
 }
 
-function readStaffRelaySession(token: string): { location_id?: string } | null {
-  const encodedPayload = token.startsWith("dev.") ? token.slice("dev.".length) : token.split(".")[0];
-  if (!encodedPayload) {
-    return null;
+function requireStaffRelayLocationId() {
+  if (!configuredRelayLocationId) {
+    throw new Error("Relay-Location fehlt.");
   }
-
-  try {
-    const base64 = encodedPayload.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), "="))) as { location_id?: string };
-  } catch {
-    return null;
-  }
-}
-
-function getConfiguredDevRelayToken() {
-  if (!configuredRelayTenantId || !configuredRelayLocationId) {
-    return "";
-  }
-
-  const payload = {
-    tenant_id: configuredRelayTenantId,
-    location_id: configuredRelayLocationId,
-    user_id: configuredRelayUserId || "dev_staff_user",
-    display_name: configuredRelayDisplayName || "Dev Staff",
-    role: configuredRelayRole || "OWNER",
-    exp: Date.now() + 12 * 60 * 60 * 1000,
-  };
-
-  return "dev." + btoa(JSON.stringify(payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function requireStaffRelayToken() {
-  const token = getStaffRelayToken();
-  if (!token) {
-    throw new Error("Staff Relay Session fehlt.");
-  }
-  return token;
-}
-
-function requireStaffRelayLocationId(token = getStaffRelayToken()) {
-  const session = readStaffRelaySession(token);
-  if (!session?.location_id) {
-    throw new Error("Staff Relay Session fehlt oder ist ungueltig.");
-  }
-  return session.location_id;
+  return configuredRelayLocationId;
 }
 
 async function createRelayOrderSnapshot(request: {
@@ -660,23 +563,16 @@ async function createRelayOrderSnapshot(request: {
   lines: BasketLine[];
   table_context: TableContext;
 }) {
-  const token = getStaffRelayToken();
-
-  if (!token) {
-    throw new Error("Staff Relay Session fehlt.");
-  }
-
   const command = await writeRelayJson<StaffRelayCommand>(
     "/api/staff/locations/" + encodeURIComponent(request.table_context.location_id) + "/order-snapshots",
     "POST",
     request,
-    token,
   );
 
-  return waitForRelayOrderAccepted(command, token);
+  return waitForRelayOrderAccepted(command);
 }
 
-async function waitForRelayOrderAccepted(command: StaffRelayCommand, token: string): Promise<CreatedOrderSnapshot> {
+async function waitForRelayOrderAccepted(command: StaffRelayCommand): Promise<CreatedOrderSnapshot> {
   let current = command;
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -690,7 +586,7 @@ async function waitForRelayOrderAccepted(command: StaffRelayCommand, token: stri
     }
 
     await new Promise((resolve) => window.setTimeout(resolve, 750));
-    current = await readRelayJson<StaffRelayCommand>(current.poll_url, token);
+    current = await readRelayJson<StaffRelayCommand>(current.poll_url);
   }
 
   throw new Error("Relay Command wartet noch auf LocalMaster.");
@@ -706,11 +602,9 @@ export function loadStationPickupsForConnection(connectionMode: ConnectionMode, 
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     return readRelayJson<StationPickup[]>(
       "/api/staff/locations/" + encodeURIComponent(locationId) + "/station-pickups?status=" + encodeURIComponent(status),
-      token,
     );
   }
 
@@ -727,15 +621,13 @@ export async function acknowledgeStationPickupForConnection(connectionMode: Conn
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     const command = await writeRelayJson<StaffRelayCommand>(
       "/api/staff/locations/" + encodeURIComponent(locationId) + "/station-pickups/" + encodeURIComponent(pickupId) + "/acknowledge",
       "POST",
       { request_id: "pickup_ack_" + crypto.randomUUID() },
-      token,
     );
-    return waitForRelayCommandAccepted(command, token) as Promise<StationPickup>;
+    return waitForRelayCommandAccepted(command) as Promise<StationPickup>;
   }
 
   throw new Error(describeConnectionUnavailable());
@@ -753,12 +645,10 @@ export function loadKdsTicketsForConnection(connectionMode: ConnectionMode, stat
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     const query = station ? "?station=" + encodeURIComponent(station) : "";
     return readRelayJson<KdsTicket[]>(
       "/api/staff/locations/" + encodeURIComponent(locationId) + "/kds-tickets" + query,
-      token,
     );
   }
 
@@ -779,15 +669,13 @@ export async function updateKdsTicketStatusForConnection(
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     const command = await writeRelayJson<StaffRelayCommand>(
       "/api/staff/locations/" + encodeURIComponent(locationId) + "/kds-tickets/" + encodeURIComponent(ticketId) + "/status",
       "POST",
       { request_id: "kds_status_" + crypto.randomUUID(), status },
-      token,
     );
-    return waitForRelayCommandAccepted(command, token) as Promise<KdsTicket>;
+    return waitForRelayCommandAccepted(command) as Promise<KdsTicket>;
   }
 
   throw new Error(describeConnectionUnavailable());
@@ -922,11 +810,9 @@ export async function loadCatalogOutputStationsForConnection(connectionMode: Con
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     const stations = await readRelayJson<CatalogOutputStation[]>(
       "/api/staff/locations/" + encodeURIComponent(locationId) + "/output-stations",
-      token,
     );
     return stations.map(normalizeCatalogOutputStation);
   }
@@ -946,11 +832,9 @@ export async function loadOwnerCatalogForConnection(connectionMode: ConnectionMo
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     const snapshot = await readRelayJson<OwnerCatalogSnapshot>(
       "/api/owner/locations/" + encodeURIComponent(locationId) + "/catalog",
-      token,
     );
     return normalizeOwnerCatalogSnapshot(snapshot);
   }
@@ -968,15 +852,13 @@ export async function runOwnerCatalogActionForConnection(
   }
 
   if (connectionMode === "RELAY") {
-    const token = requireStaffRelayToken();
-    const locationId = requireStaffRelayLocationId(token);
+    const locationId = requireStaffRelayLocationId();
     const command = await writeRelayJson<StaffRelayCommand>(
       "/api/owner/locations/" + encodeURIComponent(locationId) + "/catalog/commands",
       "POST",
       { request_id: "owner_catalog_" + crypto.randomUUID(), action, payload },
-      token,
     );
-    return waitForRelayCommandAccepted(command, token);
+    return waitForRelayCommandAccepted(command);
   }
 
   throw new Error(describeConnectionUnavailable());
@@ -1089,18 +971,18 @@ async function fetchLocalMaster(input: string, init?: RequestInit) {
   }
 }
 
-async function readRelayJson<T>(path: string, token: string): Promise<T> {
+async function readRelayJson<T>(path: string): Promise<T> {
   const response = await fetch(`${requireRelaySyncUrl()}${path}`, {
-    headers: { Authorization: "Bearer " + token },
+    credentials: "include",
   });
   return parseJsonResponse(response, undefined as T);
 }
 
-async function writeRelayJson<T>(path: string, method: "POST", body: unknown, token: string): Promise<T> {
+async function writeRelayJson<T>(path: string, method: "POST", body: unknown): Promise<T> {
   const response = await fetch(`${requireRelaySyncUrl()}${path}`, {
     method,
+    credentials: "include",
     headers: {
-      Authorization: "Bearer " + token,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -1108,7 +990,7 @@ async function writeRelayJson<T>(path: string, method: "POST", body: unknown, to
   return parseJsonResponse(response, undefined as T);
 }
 
-async function waitForRelayCommandAccepted(command: StaffRelayCommand, token: string): Promise<unknown> {
+async function waitForRelayCommandAccepted(command: StaffRelayCommand): Promise<unknown> {
   let current = command;
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -1122,7 +1004,7 @@ async function waitForRelayCommandAccepted(command: StaffRelayCommand, token: st
     }
 
     await new Promise((resolve) => window.setTimeout(resolve, 750));
-    current = await readRelayJson<StaffRelayCommand>(current.poll_url, token);
+    current = await readRelayJson<StaffRelayCommand>(current.poll_url);
   }
 
   throw new Error("Relay Command wartet noch auf LocalMaster.");
