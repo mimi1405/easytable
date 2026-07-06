@@ -24,7 +24,7 @@ import {
   cloneBasketLines,
   scopedId
 } from "./storeHelpers.js";
-import { findOpenPosOrderForTable, findOpenStaffOrderForTable, tableFromContext } from "./tableStore.js";
+import { findOpenPosOrderForTable, findOpenStaffOrderForTable, getTableLayout, tableFromContext } from "./tableStore.js";
 import type {
   BasketLine,
   CompleteMockPaymentRequest,
@@ -38,7 +38,8 @@ import type {
   OrderItem,
   PrintJob,
   StartWalleeTerminalPaymentRequest,
-  Table
+  Table,
+  TableContext
 } from "../types.js";
 
 let nextPosOrderNumber = 1;
@@ -72,6 +73,10 @@ export function listOpenOrders() {
 }
 
 export function getOpenTableOrderBasket(tableId: string): OpenTableOrderBasket | null {
+  if (!isKnownLayoutTable(tableId)) {
+    return null;
+  }
+
   const order = findOpenPosOrderForTable(tableId);
 
   if (order) {
@@ -719,10 +724,16 @@ function validateOrderSnapshotRequest(request: CreateOrderSnapshotRequest) {
   if (!request.table_context) {
     throw new Error("Cannot create a table order snapshot without table context.");
   }
+
+  validateTableContext(request.table_context);
 }
 
 function validateMockPaymentRequest(request: CompleteMockPaymentRequest) {
   validateOrderLines(request.lines);
+
+  if (request.table_context) {
+    validateTableContext(request.table_context);
+  }
 
   if (!request.request_id?.trim()) {
     throw new Error("Payment request_id is required.");
@@ -736,9 +747,33 @@ function validateMockPaymentRequest(request: CompleteMockPaymentRequest) {
 function validateWalleeTerminalPaymentRequest(request: StartWalleeTerminalPaymentRequest) {
   validateOrderLines(request.lines);
 
+  if (request.table_context) {
+    validateTableContext(request.table_context);
+  }
+
   if (!request.request_id?.trim()) {
     throw new Error("Payment request_id is required.");
   }
+}
+
+function validateTableContext(tableContext: TableContext) {
+  const layout = getTableLayout(tableContext.location_id);
+  const floor = layout.floors.find((entry) => entry.id === tableContext.floor_id);
+  const area = floor?.areas.find((entry) => entry.id === tableContext.area_id);
+  const table = area?.tables.find((entry) => entry.id === tableContext.table_id);
+
+  if (!floor || !area || !table) {
+    throw new Error("Table context is not managed by this LocalMaster.");
+  }
+}
+
+function isKnownLayoutTable(tableId: string) {
+  const layout = getTableLayout();
+  return layout.floors.some((floor) =>
+    floor.areas.some((area) =>
+      area.tables.some((table) => table.id === tableId)
+    )
+  );
 }
 
 function validateMockPaymentAmounts(

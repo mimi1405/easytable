@@ -1,0 +1,18 @@
+bucket_definitions:
+  all_data:
+    parameters: SELECT 'global' as id
+    data:
+      - SELECT * FROM tenants
+      - SELECT * FROM locations
+      - SELECT * FROM layout_floors
+      - SELECT * FROM layout_areas
+      - SELECT * FROM layout_tables
+      - SELECT * FROM catalog_categories
+      - SELECT * FROM catalog_taxes
+      - SELECT * FROM catalog_output_stations
+      - SELECT * FROM catalog_products
+      - SELECT * FROM orders
+      - SELECT * FROM order_items
+      - SELECT * FROM station_pickups
+      - SELECT * FROM kds_tickets
+      - SELECT * FROM payments

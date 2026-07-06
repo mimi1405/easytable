@@ -3,10 +3,12 @@ import Fastify from "fastify";
 
 import { closeDatabase, initializeDatabase } from "./db/client.js";
 import { registerAdminRoutes } from "./routes/adminRoutes.js";
+import { registerAuthRoutes } from "./routes/authRoutes.js";
 import { registerHealthRoutes } from "./routes/healthRoutes.js";
 import { registerLocalMasterRoutes } from "./routes/localMasterRoutes.js";
 import { registerOwnerRoutes } from "./routes/ownerRoutes.js";
 import { registerStaffRoutes } from "./routes/staffRoutes.js";
+import { registerPowerSyncRoutes } from "./routes/powersyncRoutes.js";
 import { ApiError } from "./store/errors.js";
 
 export async function buildServer() {
@@ -28,8 +30,10 @@ export async function buildServer() {
   });
 
   await app.register(registerHealthRoutes);
+  await app.register(registerAuthRoutes);
   await app.register(registerAdminRoutes);
   await app.register(registerLocalMasterRoutes);
+  await app.register(registerPowerSyncRoutes);
   await app.register(registerStaffRoutes);
   await app.register(registerOwnerRoutes);
 

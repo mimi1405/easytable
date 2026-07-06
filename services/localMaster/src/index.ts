@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { startRelayCommandPolling, stopRelayCommandPolling } from "./relayCommandWorker.js";
+import { setupNatsCommandSubscription, closeNatsConnection } from "./lib/nats.js";
 import { buildServer } from "./server.js";
 
 const port = Number(process.env.LOCAL_MASTER_PORT ?? process.env.LOCAL_REALTIME_PORT ?? 3000);
@@ -11,6 +12,7 @@ const app = await buildServer();
 const shutdown = async (signal: NodeJS.Signals) => {
   app.log.info({ signal }, "Shutting down localMaster");
   stopRelayCommandPolling();
+  await closeNatsConnection();
   await app.close();
   process.exit(0);
 };
@@ -21,6 +23,7 @@ process.on("SIGTERM", shutdown);
 try {
   await app.listen({ port, host });
   startRelayCommandPolling();
+  void setupNatsCommandSubscription();
 } catch (error) {
   app.log.error({ error }, "Failed to start localMaster");
   process.exit(1);

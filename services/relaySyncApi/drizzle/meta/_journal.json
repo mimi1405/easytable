@@ -78,6 +78,13 @@
       "when": 1783303200000,
       "tag": "0010_kds_readmodel",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783331301893,
+      "tag": "0011_majestic_norrin_radd",
+      "breakpoints": true
     }
   ]
 }

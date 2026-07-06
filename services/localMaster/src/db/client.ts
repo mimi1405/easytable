@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
+import { startPowerSync } from "../lib/powersync.js";
 import * as schema from "./schema.js";
 
 let sqlite: Database.Database | null = null;
@@ -17,6 +18,9 @@ export function getDrizzleDatabase() {
     db = drizzle(sqliteClient, { schema });
     migrate(db, { migrationsFolder: resolveLocalMasterPath("drizzle") });
     migrateLocalMasterSchema(sqliteClient);
+
+    const dbPath = resolveDatabasePath(process.env.LOCAL_MASTER_DB_PATH);
+    void startPowerSync(dbPath);
   }
 
   return db;

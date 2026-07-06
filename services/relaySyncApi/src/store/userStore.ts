@@ -46,7 +46,7 @@ export async function createLocationUser(
       await tx
         .update(users)
         .set({
-          displayName: input.display_name,
+          name: input.display_name,
           passwordHash: input.password === undefined ? existingUsers[0].passwordHash : hashSecret(input.password),
           status: input.status,
           updatedAt: now,
@@ -58,7 +58,7 @@ export async function createLocationUser(
         .values({
           id: userId,
           email: input.email,
-          displayName: input.display_name,
+          name: input.display_name,
           passwordHash: input.password === undefined ? null : hashSecret(input.password),
           status: input.status,
           createdAt: now,
@@ -113,7 +113,7 @@ export async function updateLocationUser(
   const current = await requireLocationUserRows(tenantId, locationId, userId);
   const input = normalizeUserInput({
     email: request.email ?? current.user.email,
-    display_name: request.display_name ?? current.user.displayName,
+    display_name: request.display_name ?? current.user.name,
     role: request.role ?? (current.tenantUser.role as TenantUserRole),
     password: request.password,
     pin: request.pin,
@@ -127,7 +127,7 @@ export async function updateLocationUser(
       .update(users)
       .set({
         email: input.email,
-        displayName: input.display_name,
+        name: input.display_name,
         passwordHash: input.password === undefined ? current.user.passwordHash : hashSecret(input.password),
         status: input.status,
         updatedAt: now,
@@ -162,7 +162,7 @@ export async function listBootstrapUsers(tenantId: string, locationId: string) {
   return rows.map(({ user, tenantUser, locationUser }) => ({
     user_id: user.id,
     email: user.email,
-    display_name: user.displayName,
+    display_name: user.name,
     role: tenantUser.role as TenantUserRole,
     status: user.status as "ACTIVE" | "INVITED" | "DISABLED",
     pin_hash: locationUser.pinHash,
@@ -195,7 +195,7 @@ export async function authenticateLocationUserByPin(tenantId: string, locationId
     tenant_id: tenantId,
     location_id: locationId,
     email: row.user.email,
-    display_name: row.user.displayName,
+    display_name: row.user.name,
     role,
   };
 }
@@ -350,7 +350,7 @@ function toTenantLocationUser(
     tenant_id: tenantId,
     location_id: locationId,
     email: user.email,
-    display_name: user.displayName,
+    display_name: user.name,
     role: tenantUser.role as TenantUserRole,
     status: user.status,
     has_password: Boolean(user.passwordHash),

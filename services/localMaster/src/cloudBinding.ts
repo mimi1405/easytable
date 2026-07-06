@@ -4,6 +4,7 @@ import { applyBootstrapOutputStations } from "./catalogStore.js";
 import { getDrizzleDatabase } from "./db/client.js";
 import { localState } from "./db/schema.js";
 import { getLocalMasterIdentity } from "./pairing.js";
+import { setupNatsCommandSubscription } from "./lib/nats.js";
 import { pushCatalogToRelay } from "./relayCatalogSync.js";
 import { pushTableLayoutToRelay } from "./relayLayoutSync.js";
 import { pushOperationsToRelay } from "./relayOperationsSync.js";
@@ -205,6 +206,7 @@ async function bootstrapFromRelay(binding: StoredCloudBinding) {
     void pushTableLayoutToRelay(binding);
     void pushCatalogToRelay(binding);
     void pushOperationsToRelay(binding);
+    void setupNatsCommandSubscription();
   } catch (error) {
     writeStoredBinding({
       ...binding,

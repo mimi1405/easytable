@@ -1,0 +1,20 @@
+replication:
+  connections:
+    - type: postgresql
+      uri: postgresql://easytable:easytable@postgres:5432/easytable
+      sslmode: disable
+
+storage:
+  type: postgresql
+  uri: postgresql://easytable:easytable@postgres:5432/easytable
+
+client_auth:
+  jwks:
+    keys:
+      - kty: oct
+        alg: HS256
+        k: c29tZS1kZXYtc2VjcmV0LXRoYXQtaXMtbG9uZy1lbm91Z2gtZm9yLWhzMjU2
+        kid: dev-key-1
+
+sync_config:
+  path: /config/sync-config.yaml

@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: easytable
+      POSTGRES_PASSWORD: easytable
+      POSTGRES_DB: easytable
+    ports:
+      - "5432:5432"
+    command: postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easytable -d easytable"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: -js
+    volumes:
+      - natsdata:/data
+
+  powersync:
+    image: journeyapps/powersync-service:latest
+    restart: unless-stopped
+    command: start -r unified
+    ports:
+      - "8080:8080"
+    environment:
+      POWERSYNC_CONFIG_PATH: /config/service.yaml
+    volumes:
+      - ./powersync/powersync.yaml:/config/service.yaml
+      - ./powersync/sync-config.yaml:/config/sync-config.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  natsdata:

@@ -4,6 +4,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 
 import { getDrizzleDatabase } from "../db/client.js";
 import { catalogCategories, catalogOutputStations, catalogProducts, catalogTaxes, relayCommands } from "../db/schema.js";
+import { publishCommandEvent } from "../lib/nats.js";
 import type {
   CatalogCategory,
   CatalogOutputStation,
@@ -187,6 +188,10 @@ export async function createOwnerCatalogCommand(
       updatedAt: new Date()
     })
     .returning();
+
+  if (rows[0] && location.localMasterInstanceId) {
+    void publishCommandEvent(session.tenant_id, locationId, location.localMasterInstanceId, commandId);
+  }
 
   return toRelayCommandResponse(rows[0]);
 }

@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 
 import { getDrizzleDatabase } from "../db/client.js";
 import { locations, relayCommands } from "../db/schema.js";
+import { publishCommandEvent } from "../lib/nats.js";
 import type {
   RelayCommand,
   StaffLoginRequest,
@@ -104,6 +105,10 @@ export async function createStaffOrderRelayCommand(
     })
     .returning();
 
+  if (rows[0] && location.localMasterInstanceId) {
+    void publishCommandEvent(session.tenant_id, locationId, location.localMasterInstanceId, commandId);
+  }
+
   return toStaffRelayCommand(rows[0]);
 }
 
@@ -158,6 +163,10 @@ export async function createStaffPickupAcknowledgeRelayCommand(
       updatedAt: new Date()
     })
     .returning();
+
+  if (rows[0] && location.localMasterInstanceId) {
+    void publishCommandEvent(session.tenant_id, locationId, location.localMasterInstanceId, commandId);
+  }
 
   return toStaffRelayCommand(rows[0]);
 }
@@ -215,6 +224,10 @@ export async function createKdsTicketStatusRelayCommand(
       updatedAt: new Date()
     })
     .returning();
+
+  if (rows[0] && location.localMasterInstanceId) {
+    void publishCommandEvent(session.tenant_id, locationId, location.localMasterInstanceId, commandId);
+  }
 
   return toStaffRelayCommand(rows[0]);
 }
