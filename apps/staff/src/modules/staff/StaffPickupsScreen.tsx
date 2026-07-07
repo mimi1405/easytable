@@ -95,7 +95,7 @@ export function StaffPickupsScreen() {
   }
 
   return (
-    <section className="mx-auto flex h-[calc(100svh-6.5rem)] max-w-5xl touch-manipulation flex-col overflow-hidden rounded-md border bg-[#f7f8fc] text-slate-950 shadow-sm">
+    <section className="mx-auto flex h-[calc(100svh-6.5rem)] touch-manipulation flex-col overflow-hidden rounded-md border bg-[#f7f8fc] text-slate-950 shadow-sm">
       <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-4">
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">

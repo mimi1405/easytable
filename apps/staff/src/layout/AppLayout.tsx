@@ -1,28 +1,7 @@
 import type { ReactNode } from "react";
-import { Bell, Building2, ChefHat, ClipboardList, LayoutDashboard, Package, Percent, ReceiptText, ShieldCheck, Tags } from "lucide-react";
+import { Bell, Building2, ChefHat, ClipboardList, Package, Percent, ReceiptText, ShieldCheck, Tags } from "lucide-react";
 
-import { Separator } from "@easytable/ui/components/separator";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarSeparator,
-  SidebarTrigger,
-} from "@easytable/ui/components/sidebar";
-import { TooltipProvider } from "@easytable/ui/components/tooltip";
+import { AppShell, type AppShellNavigationGroup, type AppShellUser } from "@easytable/ui/layouts/app-shell";
 
 import type { LocationServiceMode } from "../lib/local-master";
 import type { AppView, OwnerCatalogSection, StaffModule, StaffScreen } from "./navigation";
@@ -31,6 +10,9 @@ type AppLayoutProps = {
   view: AppView;
   serviceMode: LocationServiceMode;
   onNavigate: (view: AppView) => void;
+  allowedModules: StaffModule[];
+  currentUser?: AppShellUser;
+  onLogout?: () => void | Promise<void>;
   children: ReactNode;
 };
 
@@ -64,153 +46,81 @@ const staffItems: Array<{
   { screen: "pickups", label: "Abholungen", icon: Bell },
 ];
 
-export function AppLayout({ view, serviceMode, onNavigate, children }: AppLayoutProps) {
+export function AppLayout({ view, serviceMode, onNavigate, allowedModules, currentUser, onLogout, children }: AppLayoutProps) {
   return (
-    <TooltipProvider>
-      <SidebarProvider>
-        <AppSidebar onNavigate={onNavigate} serviceMode={serviceMode} view={view} />
-        <SidebarInset className="min-h-svh bg-background">
-          <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
-            <SidebarTrigger className="shrink-0" />
-            <Separator className="h-5" orientation="vertical" />
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">easyTable Staff</p>
-              <h1 className="truncate text-base font-semibold">{viewTitle(view)}</h1>
-            </div>
-          </header>
-          <main className="flex-1 px-3 py-4 sm:px-5 lg:px-6">{children}</main>
-        </SidebarInset>
-      </SidebarProvider>
-    </TooltipProvider>
+    <AppShell
+      appLabel="easyTable Staff"
+      currentUser={currentUser}
+      navigationGroups={createNavigationGroups(view, serviceMode, allowedModules, onNavigate)}
+      onLogout={onLogout}
+      title={viewTitle(view)}
+    >
+      {children}
+    </AppShell>
   );
 }
 
-function AppSidebar({ view, serviceMode, onNavigate }: Pick<AppLayoutProps, "view" | "serviceMode" | "onNavigate">) {
+function createNavigationGroups(
+  view: AppView,
+  serviceMode: LocationServiceMode,
+  allowedModules: StaffModule[],
+  onNavigate: (view: AppView) => void
+): AppShellNavigationGroup[] {
   const isStaffModuleAvailable = serviceMode === "TABLE_SERVICE";
 
-  return (
-    <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton className="h-12" size="lg" tooltip="easyTable">
-              <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-semibold">easyTable</span>
-              </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-      <SidebarSeparator />
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Module</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {modules.map((item) => {
-                const Icon = item.icon;
+  return [
+    {
+      id: "modules",
+      label: "Module",
+      items: modules
+        .filter((item) => allowedModules.includes(item.module))
+        .filter((item) => item.module !== "staff" || isStaffModuleAvailable)
+        .map((item) => {
+          if (item.module === "owner") {
+            return {
+              id: item.module,
+              label: item.label,
+              icon: item.icon,
+              isActive: view.module === "owner",
+              onSelect: () => onNavigate({ module: "owner", ownerSection: "products", staffScreen: "orders", tableContext: null }),
+              items: ownerCatalogItems.map((catalogItem) => ({
+                id: catalogItem.section,
+                label: catalogItem.label,
+                icon: catalogItem.icon,
+                isActive: view.module === "owner" && view.ownerSection === catalogItem.section,
+                onSelect: () =>
+                  onNavigate({ module: "owner", ownerSection: catalogItem.section, staffScreen: "orders", tableContext: null }),
+              })),
+            };
+          }
 
-                if (item.module === "owner") {
-                  return (
-                    <SidebarMenuItem key={item.module}>
-                      <SidebarMenuButton
-                        isActive={view.module === "owner"}
-                        onClick={() => onNavigate({ module: "owner", ownerSection: "products", staffScreen: "orders", tableContext: null })}
-                        tooltip={item.label}
-                        type="button"
-                      >
-                        <Icon className="size-4" />
-                        <span>{item.label}</span>
-                      </SidebarMenuButton>
-                      <SidebarMenuSub>
-                        {ownerCatalogItems.map((catalogItem) => {
-                          const CatalogIcon = catalogItem.icon;
+          if (item.module === "staff") {
+            return {
+              id: item.module,
+              label: item.label,
+              icon: item.icon,
+              isActive: view.module === "staff",
+              onSelect: () => onNavigate({ module: "staff", ownerSection: "products", staffScreen: "orders", tableContext: null }),
+              items: staffItems.map((staffItem) => ({
+                id: staffItem.screen,
+                label: staffItem.label,
+                icon: staffItem.icon,
+                isActive: view.module === "staff" && view.staffScreen === staffItem.screen,
+                onSelect: () => onNavigate({ module: "staff", ownerSection: "products", staffScreen: staffItem.screen, tableContext: null }),
+              })),
+            };
+          }
 
-                          return (
-                            <SidebarMenuSubItem key={catalogItem.section}>
-                              <SidebarMenuSubButton
-                                data-active={view.module === "owner" && view.ownerSection === catalogItem.section}
-                                onClick={() => onNavigate({ module: "owner", ownerSection: catalogItem.section, staffScreen: "orders", tableContext: null })}
-                              >
-                                <CatalogIcon className="size-3.5" />
-                                <span>{catalogItem.label}</span>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          );
-                        })}
-                      </SidebarMenuSub>
-                    </SidebarMenuItem>
-                  );
-                }
-
-                if (item.module === "staff") {
-                  if (!isStaffModuleAvailable) {
-                    return null;
-                  }
-
-                  return (
-                    <SidebarMenuItem key={item.module}>
-                      <SidebarMenuButton
-                        isActive={view.module === "staff"}
-                        onClick={() => onNavigate({ module: "staff", ownerSection: "products", staffScreen: "orders", tableContext: null })}
-                        tooltip={item.label}
-                        type="button"
-                      >
-                        <Icon className="size-4" />
-                        <span>{item.label}</span>
-                      </SidebarMenuButton>
-                      <SidebarMenuSub>
-                        {staffItems.map((staffItem) => {
-                          const StaffIcon = staffItem.icon;
-
-                          return (
-                            <SidebarMenuSubItem key={staffItem.screen}>
-                              <SidebarMenuSubButton
-                                data-active={view.module === "staff" && view.staffScreen === staffItem.screen}
-                                onClick={() => onNavigate({ module: "staff", ownerSection: "products", staffScreen: staffItem.screen, tableContext: null })}
-                              >
-                                <StaffIcon className="size-3.5" />
-                                <span>{staffItem.label}</span>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          );
-                        })}
-                      </SidebarMenuSub>
-                    </SidebarMenuItem>
-                  );
-                }
-
-                return (
-                  <SidebarMenuItem key={item.module}>
-                    <SidebarMenuButton
-                      isActive={view.module === item.module}
-                      onClick={() => onNavigate({ module: item.module, ownerSection: "products", staffScreen: "orders", tableContext: null })}
-                      tooltip={item.label}
-                      type="button"
-                    >
-                      <Icon className="size-4" />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton className="h-auto items-start py-2" tooltip="Dev">
-              <LayoutDashboard className="mt-0.5 size-4" />
-              <span className="block truncate text-sm font-medium">Dev sichtbar</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
-      <SidebarRail />
-    </Sidebar>
-  );
+          return {
+            id: item.module,
+            label: item.label,
+            icon: item.icon,
+            isActive: view.module === item.module,
+            onSelect: () => onNavigate({ module: item.module, ownerSection: "products", staffScreen: "orders", tableContext: null }),
+          };
+        }),
+    },
+  ];
 }
 
 function viewTitle(view: AppView) {

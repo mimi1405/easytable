@@ -23,6 +23,10 @@ function App() {
   const user = sessionData.user;
   // @ts-ignore - custom field role on user object
   const isPlatformAdmin = user.role === "platform_admin";
+  const handleLogout = async () => {
+    await signOut();
+    window.location.reload();
+  };
 
   if (!isPlatformAdmin) {
     return (
@@ -34,10 +38,7 @@ function App() {
         </p>
         <button
           className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          onClick={async () => {
-            await signOut();
-            window.location.reload();
-          }}
+          onClick={handleLogout}
         >
           Abmelden
         </button>
@@ -46,7 +47,7 @@ function App() {
   }
 
   return (
-    <AppLayout>
+    <AppLayout currentUser={{ email: user.email, name: user.name, role: "platform_admin" }} onLogout={handleLogout}>
       <TenantsPage />
     </AppLayout>
   );

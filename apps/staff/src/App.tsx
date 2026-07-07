@@ -3,7 +3,7 @@ import { useSession, signOut } from "@easytable/auth";
 import { Login } from "@easytable/ui/pages/login/Login";
 
 import { AppLayout } from "./layout/AppLayout";
-import { defaultView, type AppView } from "./layout/navigation";
+import { defaultView, type AppView, type StaffModule } from "./layout/navigation";
 import { detectConnectionMode, loadPosSettings, type LocationServiceMode } from "./lib/local-master";
 import { KdsPage } from "./modules/kds/KdsPage";
 import { OwnerCatalogPage } from "./modules/owner/catalog/OwnerCatalogPage";
@@ -124,25 +124,40 @@ function App() {
   }
 
   const userRole = isPlatformAdmin ? "platform_admin" : tenantRelation?.role;
-
-  const hasAccessToModule = (module: string) => {
-    if (userRole === "platform_admin") return true;
-    if (module === "owner") return userRole === "OWNER" || userRole === "MANAGER";
-    if (module === "staff") return userRole === "OWNER" || userRole === "MANAGER" || userRole === "STAFF";
-    if (module === "kds") return userRole === "OWNER" || userRole === "MANAGER" || userRole === "KDS";
-    return false;
+  const currentUser = {
+    name: authDetails?.user?.name ?? sessionData.user.name,
+    email: authDetails?.user?.email ?? sessionData.user.email,
+    role: userRole,
+  };
+  const handleLogout = async () => {
+    await signOut();
+    window.location.reload();
   };
 
   const isStaffModuleAvailable = effectiveServiceMode === "TABLE_SERVICE";
+  const allowedModules = getAllowedModules(userRole);
+  const visibleModules = allowedModules.filter((module) => module !== "staff" || isStaffModuleAvailable);
+  const activeView = visibleModules.includes(view.module) ? view : defaultViewForModule(visibleModules[0] ?? "staff");
 
-  if (!hasAccessToModule(view.module)) {
+  const hasAccessToModule = (module: string) => {
+    return visibleModules.includes(module as StaffModule);
+  };
+
+  if (!hasAccessToModule(activeView.module)) {
     return (
-      <AppLayout onNavigate={setView} serviceMode={effectiveServiceMode} view={view}>
+      <AppLayout
+        allowedModules={allowedModules}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onNavigate={setView}
+        serviceMode={effectiveServiceMode}
+        view={activeView}
+      >
         <div className="mx-auto grid min-h-[calc(100svh-7rem)] max-w-4xl place-items-center">
           <section className="w-full rounded-md border bg-card p-6 text-card-foreground shadow-sm sm:p-8 text-center">
             <h2 className="text-2xl font-semibold text-destructive">Zugriff verweigert</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Deine Rolle ({userRole}) berechtigt dich nicht zum Zugriff auf diesen Bereich ({view.module}).
+              Deine Rolle ({userRole}) berechtigt dich nicht zum Zugriff auf diesen Bereich ({activeView.module}).
             </p>
           </section>
         </div>
@@ -151,14 +166,21 @@ function App() {
   }
 
   return (
-    <AppLayout onNavigate={setView} serviceMode={effectiveServiceMode} view={view}>
-      {view.module === "owner" ? (
-        view.ownerSection === "locations" ? <OwnerLocationsPage /> : <OwnerCatalogPage section={view.ownerSection} />
-      ) : view.module === "staff" ? (
+    <AppLayout
+      allowedModules={allowedModules}
+      currentUser={currentUser}
+      onLogout={handleLogout}
+      onNavigate={setView}
+      serviceMode={effectiveServiceMode}
+      view={activeView}
+    >
+      {activeView.module === "owner" ? (
+        activeView.ownerSection === "locations" ? <OwnerLocationsPage /> : <OwnerCatalogPage section={activeView.ownerSection} />
+      ) : activeView.module === "staff" ? (
         isStaffModuleAvailable ? (
           <StaffServicePage
-            screen={view.staffScreen}
-            tableContext={view.tableContext}
+            screen={activeView.staffScreen}
+            tableContext={activeView.tableContext}
             onBackToTables={() =>
               setView((current) => ({
                 ...current,
@@ -179,13 +201,30 @@ function App() {
         ) : (
           <StaffModuleBlockedState />
         )
-      ) : view.module === "kds" ? (
+      ) : activeView.module === "kds" ? (
         <KdsPage />
       ) : (
-        <ModulePlaceholder module={view.module} />
+        <ModulePlaceholder module={activeView.module} />
       )}
     </AppLayout>
   );
+}
+
+function getAllowedModules(userRole: string | undefined): StaffModule[] {
+  if (userRole === "platform_admin") return ["owner", "staff", "kds"];
+  if (userRole === "OWNER" || userRole === "MANAGER") return ["owner", "staff", "kds"];
+  if (userRole === "STAFF") return ["staff"];
+  if (userRole === "KDS") return ["kds"];
+  return [];
+}
+
+function defaultViewForModule(module: StaffModule): AppView {
+  return {
+    module,
+    ownerSection: "products",
+    staffScreen: "orders",
+    tableContext: null,
+  };
 }
 
 function StaffModuleBlockedState() {

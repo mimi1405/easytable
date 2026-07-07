@@ -21,6 +21,7 @@ import type {
 import type { PosOrderSnapshot } from "../store/storeState.js";
 
 process.env.LOCAL_MASTER_DB_PATH = join(mkdtempSync(join(tmpdir(), "easytable-localmaster-test-")), "local-master.sqlite3");
+process.env.LOCAL_MASTER_DISABLE_POWERSYNC = "1";
 
 const { buildServer } = await import("../server.js");
 const { getDrizzleDatabase } = await import("../db/client.js");
@@ -113,7 +114,7 @@ test("order snapshot request_id replay does not create a duplicate order", async
   const request = {
     request_id: "order_snapshot_replay_same",
     lines: [basketLine("order-replay-line", 1200)],
-    table_context: tableContext("table-order-replay", "Tisch Replay")
+    table_context: tableContext("table_basilica_fumoir_2", "2")
   };
 
   const first = await postJson<CreatedOrderSnapshot>("/api/order-snapshots", request, 201);
@@ -127,7 +128,7 @@ test("order snapshot request_id replay does not create a duplicate order", async
 });
 
 test("staff table orders appear in the POS basket and close when paid from POS", async () => {
-  const table = tableContext("table-staff-payment", "Tisch Staff");
+  const table = tableContext("table_basilica_fumoir_3", "3");
   const staffOrder = pushStaffOrder("staff_order_pos_payment", table, [
     { productId: "prod_staff_lemonade", productName: "Staff Lemonade", unitPrice: 700, quantity: 2 }
   ]);
@@ -163,7 +164,7 @@ test("staff table orders appear in the POS basket and close when paid from POS",
 });
 
 test("staff table payment lookup does not close an order from another location", async () => {
-  const table = tableContext("shared-table-id", "Shared Table");
+  const table = tableContext("table_basilica_og_30", "30");
   const otherLocationTable = { ...table, location_id: "other_location" };
   const otherStaffOrder = pushStaffOrder("staff_order_other_location", otherLocationTable, [
     { productId: "prod_staff_soda", productName: "Other Location Soda", unitPrice: 500, quantity: 1 }
@@ -604,6 +605,120 @@ test("relay staff order ACK includes fresh operations snapshot", async () => {
   );
 });
 
+test("relay command for a different LocalMaster binding is ACKed as failed", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const now = Date.now();
+  const commandId = "relay_wrong_binding_command";
+  let ackBody: unknown = null;
+
+  writeCloudBindingForTest({
+    localMasterInstanceId: "lm_expected_binding",
+    now,
+    relayBaseUrl: "http://relay.test",
+    relayToken: "relay_token_wrong_binding"
+  });
+
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+
+    if (url.endsWith("/api/local-masters/commands/pending")) {
+      return jsonResponse({
+        data: [{
+          command_id: commandId,
+          tenant_id: "tenant_basilica",
+          location_id: "loc_basilica_main",
+          local_master_instance_id: "lm_other_binding",
+          type: "STAFF_PICKUP_ACKNOWLEDGE",
+          status: "delivered",
+          payload: {
+            request_id: "relay_wrong_binding_request",
+            pickup_id: "pickup_wrong_binding"
+          }
+        }]
+      });
+    }
+
+    if (url.endsWith("/api/local-masters/commands/" + commandId + "/ack")) {
+      ackBody = JSON.parse(String(init?.body ?? "{}"));
+      return jsonResponse({ ok: true });
+    }
+
+    return new Response("Unexpected URL " + url, { status: 500 });
+  };
+  console.warn = () => undefined;
+
+  try {
+    await pollRelayCommands();
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+
+  const capturedAck = ackBody as { status?: string; error?: string };
+  assert.equal(capturedAck.status, "failed");
+  assert.equal(capturedAck.error, "Relay command does not belong to this LocalMaster binding.");
+});
+
+test("unsupported relay command is ACKed as failed after local rejection", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const now = Date.now();
+  const commandId = "relay_unsupported_command";
+  let ackBody: unknown = null;
+
+  writeCloudBindingForTest({
+    localMasterInstanceId: "lm_test_unsupported_command",
+    now,
+    relayBaseUrl: "http://relay.test",
+    relayToken: "relay_token_unsupported"
+  });
+
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+
+    if (url.endsWith("/api/local-masters/commands/pending")) {
+      return jsonResponse({
+        data: [{
+          command_id: commandId,
+          tenant_id: "tenant_basilica",
+          location_id: "loc_basilica_main",
+          local_master_instance_id: "lm_test_unsupported_command",
+          type: "UNSUPPORTED_TEST_COMMAND",
+          status: "delivered",
+          payload: { request_id: "relay_unsupported_request" }
+        }]
+      });
+    }
+
+    if (url.endsWith("/api/local-masters/commands/" + commandId + "/ack")) {
+      ackBody = JSON.parse(String(init?.body ?? "{}"));
+      return jsonResponse({ ok: true });
+    }
+
+    return new Response("Unexpected URL " + url, { status: 500 });
+  };
+  console.warn = () => undefined;
+
+  try {
+    await pollRelayCommands();
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+
+  const capturedAck = ackBody as { status?: string; error?: string };
+  assert.equal(capturedAck.status, "failed");
+  assert.equal(capturedAck.error, "Unsupported relay command type: UNSUPPORTED_TEST_COMMAND");
+});
+
+test("unpaired PowerSync does not block local REST reads", async () => {
+  const response = await app.inject({ method: "GET", url: "/api/orders/open" });
+
+  assert.equal(response.statusCode, 200, response.body);
+  assert.ok(Array.isArray(response.json<{ data: unknown[] }>().data));
+});
+
 async function postJson<T>(url: string, request: unknown, expectedStatus: number): Promise<T> {
   const response = await app.inject({
     method: "POST",
@@ -840,15 +955,21 @@ function pushStaffOrder(
 }
 
 function tableContext(tableId: string, tableName: string): TableContext {
+  const area = tableId.includes("_fumoir_")
+    ? { id: "area_basilica_fumoir", name: "Fumoir", floorId: "floor_basilica_eg", floorName: "EG" }
+    : tableId.includes("_og_")
+      ? { id: "area_basilica_og_lounge", name: "Lounge", floorId: "floor_basilica_og", floorName: "OG" }
+      : { id: "area_basilica_bar", name: "Bar", floorId: "floor_basilica_eg", floorName: "EG" };
+
   return {
-    tenant_id: "tenant_test",
-    location_id: "location_test",
-    floor_id: "floor_test",
-    area_id: "area_main",
+    tenant_id: "tenant_basilica",
+    location_id: "loc_basilica_main",
+    floor_id: area.floorId,
+    area_id: area.id,
     table_id: tableId,
     table_name: tableName,
-    area_name: "Main",
-    floor_name: "Ground",
+    area_name: area.name,
+    floor_name: area.floorName,
     seats: 2
   };
 }

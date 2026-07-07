@@ -1,12 +1,13 @@
 import { connect, type NatsConnection } from "nats";
 
 let natsConn: NatsConnection | null = null;
+let connectNats = connect;
 
 export async function getNatsConnection(): Promise<NatsConnection> {
   if (!natsConn) {
     const url = process.env.NATS_URL ?? "nats://localhost:4222";
     try {
-      natsConn = await connect({ servers: url });
+      natsConn = await connectNats({ servers: url });
       console.log(`Connected to NATS server at ${url}`);
     } catch (error) {
       console.error(`Failed to connect to NATS server at ${url}:`, error);
@@ -29,4 +30,14 @@ export async function publishCommandEvent(
   } catch (error) {
     console.warn("Failed to publish NATS command event:", error);
   }
+}
+
+export function setNatsConnectForTest(nextConnect: typeof connect) {
+  connectNats = nextConnect;
+  natsConn = null;
+}
+
+export function resetNatsForTest() {
+  connectNats = connect;
+  natsConn = null;
 }

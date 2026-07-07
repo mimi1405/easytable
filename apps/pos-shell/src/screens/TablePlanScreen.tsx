@@ -194,16 +194,13 @@ export function TablePlanScreen({
                 >
                   <Card
                     className={cn(
-                      "aspect-[1.05] min-h-36 w-full rounded-md bg-white py-0 shadow-xl shadow-slate-200/70 transition group-hover/button:bg-white",
+                      "aspect-[1.05] min-h-36 w-full rounded-md bg-white py-0 shadow-xl border border-slate-300 transition group-hover/button:bg-white",
                       hasOpenOrder ? "ring-emerald-300" : "ring-slate-100",
                     )}
                   >
                     <CardContent className="flex h-full flex-col items-center justify-center p-4 text-center">
                       <span className="text-4xl font-black text-slate-950">
                         {table.name}
-                      </span>
-                      <span className="mt-3 text-sm font-black text-slate-500">
-                        {table.seats} Sitzplatze
                       </span>
                       {hasOpenOrder ? (
                         <Badge

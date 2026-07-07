@@ -1,8 +1,8 @@
 # POS-Hospitality-System: Zielarchitektur
 
-> **Version:** 3.2
+> **Version:** 3.3
 > **Prinzip:** Erst lokal stabil, dann Cloud-Relay und Sync.
-> **Kernidee:** `localMaster` ist die lokale Wahrheit. `relaySyncApi` ist spaeter der Cloud-Treffpunkt fuer Sync, Remote Commands und Status.
+> **Kernidee:** `localMaster` ist die lokale Wahrheit. `relaySyncApi` ist der Cloud-Treffpunkt fuer Sync, Remote Commands und Status. PowerSync und NATS sind Infrastruktur, keine neue Source of Truth.
 
 ---
 
@@ -48,6 +48,7 @@ Er vereint zwei Cloud-Aufgaben in einer Node/Fastify-App:
 
 * **Sync API:** Stammdaten, Reports, Tagesabschluss-Upload, Health, History.
 * **Relay API:** Live Commands von Cloud/5G-Staff-Geraeten an den verbundenen `localMaster`.
+* **PowerSync API:** Token- und Upload-Endpunkte fuer die technische Replikation lokaler Read Models.
 
 Wichtig:
 
@@ -76,7 +77,9 @@ Technologie:
 * REST API
 * WebSocket Server
 * lokale SQLite-Datenbank
-* spaeter Cloud Connector zu `relaySyncApi`
+* PowerSync-Connector gegen dieselbe lokale SQLite-Datei
+* NATS-Command-Poke-Subscription fuer Cloud Relay
+* Cloud Connector zu `relaySyncApi`
 
 Aufgaben:
 
@@ -87,7 +90,8 @@ Aufgaben:
 * Terminal-/Geraete-Pairing verwalten
 * Tagesabschluss berechnen und speichern
 * Print Queue und lokale Outbox/Inbox verwalten
-* spaeter Cloud Connector zu `relaySyncApi` verwalten
+* Cloud Binding, Bootstrap und Relay-Token verwalten
+* PowerSync und Relay-Polling starten, ohne lokalen Betrieb zu blockieren
 
 Netzwerkstandard:
 
@@ -149,7 +153,7 @@ http://192.168.1.20:3000/staff
 
 Damit funktionieren lokale Realtime-Updates stabil im Restaurant-WLAN.
 
-Hybrid spaeter:
+Hybrid:
 
 Wenn ein Staff-Geraet nicht im lokalen WLAN ist, z.B. Terrasse, grosse Flaeche oder 5G-Fallback, kann die Staff-App Commands ueber `relaySyncApi` senden. Der `localMaster` bekommt diese Commands ueber seinen ausgehenden Cloud-Tunnel.
 
@@ -171,13 +175,15 @@ Stationen sind Standort-/Tenant-Objekte. Routing nutzt stabile IDs wie `station_
 
 `relaySyncApi` ist der zukuenftige Cloud-Server.
 
-Technologie-Ziel:
+Technologie:
 
 * Node.js + TypeScript
 * Fastify
 * PostgreSQL
-* WebSocket fuer `localMaster` Tunnel
-* Redis spaeter bei mehreren Relay-Instanzen
+* Better Auth fuer Cloud-/Staff-Sessions
+* PowerSync Token-/Upload-Endpunkte
+* NATS fuer interne Command-Wakeups
+* SSE fuer Relay-Staff-Realtime
 * Docker Deployment
 
 Aufgaben:
@@ -186,7 +192,7 @@ Aufgaben:
 * Sync-Daten speichern und ausliefern
 * Commands persistent speichern
 * verbundene `localMaster` Instanzen kennen
-* Commands an verbundenen `localMaster` weiterleiten
+* Commands ueber HTTP Polling plus NATS-Poke an den passenden `localMaster` ausliefern
 * Status zurueckgeben: `pending`, `delivered`, `accepted`, `failed`
 
 ---
@@ -346,6 +352,19 @@ Wichtig:
 
 Ein Staff-Client darf erst `gebucht` anzeigen, wenn `accepted` vom `localMaster` zurueckkam. Vorher ist der Command pending. Das gilt auch dann, wenn die Cloud den Command bereits gespeichert oder an den Tunnel geliefert hat.
 
+Aktueller Transport:
+
+```text
+Staff/Owner/KDS ausserhalb WLAN
+-> relaySyncApi speichert Command in PostgreSQL relay_commands
+-> relaySyncApi published optional einen NATS-Poke
+-> localMaster pollt /api/local-masters/commands/pending
+-> localMaster fuehrt lokal aus
+-> localMaster ACKt /api/local-masters/commands/:commandId/ack
+```
+
+NATS beschleunigt nur die Abholung. Die dauerhafte Queue, Redelivery und ACK-Wahrheit liegen in PostgreSQL und im lokalen Command-/Idempotency-Modell.
+
 Beispiel Command:
 
 ```json
@@ -366,7 +385,81 @@ Beispiel Command:
 
 ---
 
-## 8. Hybrid-Betrieb fuer grosse Flaechen
+## 8. Sync- und Messaging-Infrastruktur
+
+PowerSync, NATS, WebSocket und SSE haben verschiedene Aufgaben. Keine dieser Transportebenen ersetzt den `localMaster` als lokale Wahrheit.
+
+### 8.1 PowerSync
+
+PowerSync ist technische Sync-Infrastruktur fuer lokale und Cloud-Read-Models.
+
+Aktuell:
+
+* `services/localMaster` nutzt `@powersync/node`.
+* Die PowerSync-Datenbank ist an dieselbe lokale SQLite-Datei gekoppelt, die `localMaster` besitzt.
+* Der Connector holt Credentials ueber `relaySyncApi`:
+
+```text
+GET /api/local-masters/powersync-token
+Authorization: Bearer <relay_token>
+```
+
+* Lokale CRUD-Batches werden an `relaySyncApi` hochgeladen:
+
+```text
+POST /api/local-masters/powersync-upload
+Authorization: Bearer <relay_token>
+```
+
+* `relaySyncApi` mappt bekannte Tabellen auf PostgreSQL-Tabellen und ignoriert unbekannte Tabellen.
+
+Soll-Regeln:
+
+* PowerSync darf Stammdaten, Layout, Orders/Payments-Readmodels und Diagnosezustand replizieren.
+* PowerSync darf keine Zahlung, Bestellung, KDS-Aenderung, Print-Queue oder Day-Close final entscheiden.
+* Wenn PowerSync nicht verbunden ist oder Uploads fehlschlagen, muss der lokale Restaurantbetrieb weiterlaufen.
+* Konflikte werden in der Cloud als Sync-/Reporting-Problem behandelt, nicht als Grund, lokale Kassenablaeufe zu stoppen.
+
+### 8.2 NATS
+
+NATS ist ein interner Wake-up-Bus fuer Relay Commands.
+
+Aktuell:
+
+* `relaySyncApi` published nach dem Speichern eines persistenten Commands ein Event.
+* `localMaster` subscribed nach erfolgreichem Cloud-Pairing.
+* Subject:
+
+```text
+commands.{tenantId}.{locationId}.{localMasterInstanceId}
+```
+
+* Die Message enthaelt nur einen Hinweis auf den Command, z.B. `commandId`.
+* Nach einem Poke ruft `localMaster` trotzdem die durable Queue ab.
+
+Soll-Regeln:
+
+* NATS ist kein Command Store.
+* NATS darf keine ACKs und keine finalen Ergebnisse ersetzen.
+* Wenn NATS ausfaellt, muss periodisches HTTP Polling weiterhin Commands finden.
+* Bei Reconnect triggert `localMaster` einen Catch-up-Poll.
+
+### 8.3 Realtime fuer Clients
+
+Lokales Realtime:
+
+* `localMaster` sendet WebSocket-Events an lokale POS-/Staff-/KDS-Clients.
+* Events sind Hinweise; Clients lesen bei Bedarf bestaetigte Wahrheit per REST erneut.
+
+Relay-Realtime:
+
+* `relaySyncApi` bietet Staff/Owner/KDS im Relay-Modus SSE-Events.
+* SSE spiegelt Cloud-/Relay-Status und Readmodel-Aenderungen.
+* SSE ersetzt keine lokale Ausfuehrung und keine `accepted`-ACKs.
+
+---
+
+## 9. Hybrid-Betrieb fuer grosse Flaechen
 
 Fast Path:
 
@@ -382,7 +475,7 @@ Staff ueber 5G/anderes Netz -> relaySyncApi -> localMaster Cloud Connector
 
 Restaurant-Anforderung fuer Live-Fallback:
 
-Der `localMaster` braucht Internet, damit sein ausgehender Tunnel zu `relaySyncApi` offen bleibt.
+Der `localMaster` braucht Internet, damit er Commands aus der Cloud-Queue abholen, NATS-Pokes empfangen und ACKs an `relaySyncApi` senden kann.
 
 Wenn Staff 5G hat, aber der Master-PC kein Internet, kann die Cloud Commands nur speichern. Sie darf keinen Erfolg vortaeuschen. Die Staff-App zeigt dann `wartet auf Restaurant` oder `pending`.
 
@@ -394,16 +487,17 @@ Fuer sehr grosse Flaechen oder Terrassen ist empfohlen:
 
 ---
 
-## 9. Systembild
+## 10. Systembild
 
 ```text
                               CLOUD
                     services/relaySyncApi
         Sync API / Relay Commands / Auth / Reporting
+                PowerSync API / SSE / NATS Pokes
                          ^              ^
                          |              |
-                  Sync/Health      Outbound WS Tunnel
-                         |              |
+              PowerSync/HTTP       HTTP Poll + ACK
+              Sync/Health          optional NATS Poke
 +---------------------------------------------------------+
 |                    LOKALER STANDORT                     |
 |                                                         |
@@ -425,12 +519,12 @@ Fuer sehr grosse Flaechen oder Terrassen ist empfohlen:
 
 Fallback ausserhalb WLAN:
 
-Staff-App -> relaySyncApi -> localMaster Tunnel -> lokale Realtime Events
+Staff-App -> relaySyncApi -> durable relay_commands -> localMaster pollt/ACKt -> lokale Realtime Events
 ```
 
 ---
 
-## 10. Beispiel: lokale Bestellung
+## 11. Beispiel: lokale Bestellung
 
 ```text
 Staff im WLAN nimmt Bestellung auf
@@ -445,13 +539,14 @@ Staff im WLAN nimmt Bestellung auf
 
 ---
 
-## 11. Beispiel: 5G/Cloud-Relay Bestellung
+## 12. Beispiel: 5G/Cloud-Relay Bestellung
 
 ```text
 Staff-Geraet ist nicht im Restaurant-WLAN
 -> Staff-App sendet ADD_ITEMS_TO_TABLE an relaySyncApi
 -> relaySyncApi speichert Command als pending
--> relaySyncApi sendet Command ueber offenen Tunnel an localMaster
+-> relaySyncApi published optional einen NATS-Poke
+-> localMaster holt Command per HTTP Polling ab
 -> localMaster prueft lokale Struktur, command_id und Idempotenz
 -> localMaster speichert Order lokal
 -> localMaster schreibt bestaetigtes Ereignis in die Outbox
@@ -469,7 +564,7 @@ Staff-App zeigt nicht gebucht, sondern wartet auf Restaurant
 
 ---
 
-## 12. Lokale Datenverantwortung
+## 13. Lokale Datenverantwortung
 
 | Bereich              | Master                         |
 | -------------------- | ------------------------------ |
@@ -484,6 +579,8 @@ Staff-App zeigt nicht gebucht, sondern wartet auf Restaurant
 | Sync Inbox           | localMaster / lokale SQLite    |
 | Sync History Cloud   | relaySyncApi / PostgreSQL      |
 | Command Queue Cloud  | relaySyncApi / PostgreSQL      |
+| NATS                 | Wake-up/Poke, nicht durable    |
+| PowerSync            | Sync-Infrastruktur/Read Models |
 | Produkte MVP         | localMaster lokal              |
 | Produkte spaeter     | Cloud, localMaster pullt       |
 | Staff-Drafts         | Staff-App lokal bis gesendet   |
@@ -492,7 +589,7 @@ Staff-App zeigt nicht gebucht, sondern wartet auf Restaurant
 
 ---
 
-## 13. MVP-Reihenfolge
+## 14. MVP-Reihenfolge
 
 ### MVP 1: LocalMaster Core + POS-Shell
 
@@ -545,7 +642,9 @@ Enthaelt:
 * `services/relaySyncApi` als Workspace-Service
 * Fastify + TypeScript
 * PostgreSQL Command-/Sync-Tabellen
-* WebSocket Endpoint fuer `localMaster` Tunnel
+* HTTP Polling + ACK-Endpunkte fuer `localMaster`
+* NATS-Poke fuer schnellere Command-Abholung
+* PowerSync Token-/Upload-Endpunkte fuer Sync-Readmodels
 * erste Command Queue mit `pending/delivered/accepted/failed`
 * erster Command: `ADD_ITEMS_TO_TABLE`
 
@@ -564,7 +663,7 @@ Enthaelt:
 
 ---
 
-## 14. Kritische Regeln
+## 15. Kritische Regeln
 
 1. `localMaster` ist die lokale Source of Truth.
 2. Pro Standort gibt es genau einen aktiven `localMaster`.
@@ -585,17 +684,19 @@ Enthaelt:
 17. Station Routing nutzt stabile `station_id`; Namen sind Anzeige/Snapshot.
 18. Cloud Orders/Payments sind Sync-/Reporting-Spiegel, nicht operative Master-Wahrheit.
 19. Mehrere SQLite-Master pro Standort sind kein Ziel.
+20. PowerSync ist Sync-Infrastruktur und darf lokale operative Entscheidungen nicht ersetzen.
+21. NATS ist nur Wake-up/Poke; durable Commands und ACKs bleiben in PostgreSQL und lokalem Idempotency-State.
 
 ---
 
-## 15. Naechster technischer Schnitt
+## 16. Naechster technischer Schnitt
 
 Kurzfristig:
 
-1. `relaySyncApi` nur sauber benennen und als zukuenftigen Cloud-Service dokumentieren.
-2. Noch keinen produktiven Cloud Relay erzwingen.
-3. Erst Staff/KDS lokal gegen `localMaster` bauen.
-4. Danach `relaySyncApi` als echten Workspace-Service mit Fastify/TypeScript/PostgreSQL anziehen.
+1. `relaySyncApi` als Cloud-Service mit Auth, Tenant/Location, Relay Commands, PowerSync und NATS klar halten.
+2. PowerSync und NATS robust machen, ohne lokale Orders/Payments davon abhaengig zu machen.
+3. Staff/KDS lokal gegen `localMaster` weiter stabilisieren.
+4. Danach Hybrid Staff Fallback ueber durable Relay Commands ausbauen.
 
 Die aktuelle Prioritaet bleibt:
 

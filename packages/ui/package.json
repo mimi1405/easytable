@@ -9,6 +9,8 @@
     "./hooks/*": "./src/hooks/*.ts",
     "./i18n": "./src/i18n/index.tsx",
     "./i18n/*": "./src/i18n/*.ts",
+    "./layouts/app-shell": "./src/layouts/app-shell.tsx",
+    "./layouts/*": "./src/layouts/*.tsx",
     "./lib/*": "./src/lib/*.ts",
     "./pages/*": "./src/pages/*.tsx",
     "./styles/globals.css": "./src/styles/globals.css"

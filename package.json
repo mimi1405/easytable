@@ -22,6 +22,10 @@
     "build:master": "npm run build -w services/localMaster",
     "build:realtime": "npm run build:master",
     "build:relay-sync": "npm run build -w services/relaySyncApi",
-    "test:master": "npm run test -w services/localMaster"
+    "test:master": "npm run test -w services/localMaster",
+    "test:relay": "npm run test -w services/relaySyncApi",
+    "test:pos:logic": "node --import tsx --test \"apps/pos-shell/src/**/*.test.ts\"",
+    "test:staff:logic": "node --import tsx --test \"apps/staff/src/**/*.test.ts\"",
+    "test": "npm run test:master && npm run test:relay && npm run test:pos:logic && npm run test:staff:logic"
   }
 }

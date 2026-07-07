@@ -5,8 +5,6 @@ import { Button } from "@easytable/ui/components/button";
 
 import {
   detectConnectionMode,
-  getLocalMasterUrl,
-  getRelaySyncUrl,
   loadOwnerCatalogForConnection,
   runOwnerCatalogActionForConnection,
   subscribeConnectionEvents,
@@ -122,14 +120,6 @@ export function OwnerCatalogPage({ section }: OwnerCatalogPageProps) {
       )}
     </div>
   );
-}
-
-function sectionTitle(section: OwnerCatalogSection) {
-  if (section === "products") {
-    return "Produkte";
-  }
-
-  return section === "categories" ? "Kategorien" : "Steuern";
 }
 
 function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
