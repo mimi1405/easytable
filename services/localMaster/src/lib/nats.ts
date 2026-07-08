@@ -8,6 +8,9 @@ let isConnecting = false;
 
 export async function getNatsConnection(): Promise<NatsConnection> {
   if (natsConn) return natsConn;
+  if (process.env.LOCAL_MASTER_DISABLE_NATS === "1") {
+    throw new Error("NATS is disabled.");
+  }
 
   const url = process.env.NATS_URL ?? "nats://localhost:4222";
   natsConn = await connect({
@@ -32,6 +35,10 @@ export async function getNatsConnection(): Promise<NatsConnection> {
 }
 
 export async function setupNatsCommandSubscription() {
+  if (process.env.LOCAL_MASTER_DISABLE_NATS === "1") {
+    return;
+  }
+
   if (isConnecting) return;
   isConnecting = true;
 

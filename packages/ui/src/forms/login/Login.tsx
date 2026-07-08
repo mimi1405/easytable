@@ -79,12 +79,12 @@ export function LoginForm({
             <FieldLabel htmlFor="password">
               {t("login.form.passwordLabel")}
             </FieldLabel>
-            <a
-              href="#"
-              className="ml-auto text-sm underline-offset-4 hover:underline"
+            <span
+              className="ml-auto text-sm text-muted-foreground"
+              title="Bitte wende dich an einen Administrator, um dein Passwort zuruecksetzen zu lassen."
             >
               {t("login.form.forgotPassword")}
-            </a>
+            </span>
           </div>
           <Input 
             id="password" 

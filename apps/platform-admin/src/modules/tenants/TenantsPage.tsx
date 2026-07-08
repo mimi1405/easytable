@@ -7,13 +7,17 @@ import {
   createLocalMasterPairingSession,
   createOutputStation,
   deleteOutputStation,
+  archiveLocationUser,
   createTenant,
+  deleteLocationUser,
   getRelaySyncApiUrl,
   loadCurrentLocalMasterPairingSession,
   loadLocationUsers,
   loadLocations,
   loadOutputStations,
   loadTenants,
+  resetLocationUserPassword,
+  resetLocationUserPin,
   updateLocation,
   updateLocationUser,
   updateOutputStation,
@@ -178,16 +182,17 @@ export function TenantsPage() {
     }
   }
 
-  async function runUserAction(action: () => Promise<void>) {
+  async function runUserAction<T>(action: () => Promise<T>): Promise<T> {
     if (!selectedTenant || !selectedLocation) {
-      return;
+      throw new Error("Erst Tenant und Location auswaehlen.");
     }
 
     setError(null);
 
     try {
-      await action();
+      const result = await action();
       await refreshLocationUsers(selectedTenant.id, selectedLocation.id);
+      return result;
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "User-Aktion fehlgeschlagen.");
       throw actionError;
@@ -310,10 +315,31 @@ export function TenantsPage() {
       <LocationUsersSection
         isLoading={isLoadingUsers}
         location={selectedLocation}
+        onArchive={(userId) =>
+          runUserAction(async () =>
+            void (await archiveLocationUser(selectedTenant?.id ?? "", selectedLocation?.id ?? "", userId))
+          )
+        }
         onCreate={(input) =>
           runUserAction(async () => void (await createLocationUser(selectedTenant?.id ?? "", selectedLocation?.id ?? "", input)))
         }
+        onDelete={(userId) =>
+          runUserAction(async () =>
+            void (await deleteLocationUser(selectedTenant?.id ?? "", selectedLocation?.id ?? "", userId))
+          )
+        }
         onReload={() => refreshLocationUsers()}
+        onResetPassword={(userId) =>
+          runUserAction(async () =>
+            void (await resetLocationUserPassword(selectedTenant?.id ?? "", selectedLocation?.id ?? "", userId, {}))
+          )
+        }
+        onResetPin={(userId) =>
+          runUserAction(async () => {
+            const result = await resetLocationUserPin(selectedTenant?.id ?? "", selectedLocation?.id ?? "", userId, {});
+            return result.generated_pin;
+          })
+        }
         onUpdate={(userId, input) =>
           runUserAction(async () =>
             void (await updateLocationUser(selectedTenant?.id ?? "", selectedLocation?.id ?? "", userId, input))

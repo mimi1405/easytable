@@ -5,13 +5,23 @@ import { Login } from "@easytable/ui/pages/login/Login";
 import { AppLayout } from "./layout/AppLayout";
 import { defaultView, type AppView, type StaffModule } from "./layout/navigation";
 import { detectConnectionMode, loadPosSettings, type LocationServiceMode } from "./lib/local-master";
+import { AccountSetupPage } from "./modules/account-setup/AccountSetupPage";
 import { KdsPage } from "./modules/kds/KdsPage";
 import { OwnerCatalogPage } from "./modules/owner/catalog/OwnerCatalogPage";
+import { OwnerEmployeesPage } from "./modules/owner/employees/OwnerEmployeesPage";
 import { OwnerLocationsPage } from "./modules/owner/locations/OwnerLocationsPage";
 import { ModulePlaceholder } from "./modules/placeholder/ModulePlaceholder";
 import { StaffServicePage } from "./modules/staff/StaffServicePage";
 
 function App() {
+  if (window.location.pathname === "/account-setup") {
+    return <AccountSetupPage />;
+  }
+
+  return <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
   const { data: sessionData, isPending } = useSession();
   const [authDetails, setAuthDetails] = useState<{
     user: any;
@@ -175,7 +185,13 @@ function App() {
       view={activeView}
     >
       {activeView.module === "owner" ? (
-        activeView.ownerSection === "locations" ? <OwnerLocationsPage /> : <OwnerCatalogPage section={activeView.ownerSection} />
+        activeView.ownerSection === "locations" ? (
+          <OwnerLocationsPage />
+        ) : activeView.ownerSection === "employees" ? (
+          <OwnerEmployeesPage />
+        ) : (
+          <OwnerCatalogPage section={activeView.ownerSection} />
+        )
       ) : activeView.module === "staff" ? (
         isStaffModuleAvailable ? (
           <StaffServicePage

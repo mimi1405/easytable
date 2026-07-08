@@ -1,4 +1,5 @@
 export type TenantStatus = "ACTIVE" | "SUSPENDED";
+export type UserStatus = "ACTIVE" | "INVITED" | "DISABLED";
 
 export type Tenant = {
   id: string;
@@ -32,7 +33,7 @@ export type TenantLocationUser = {
   email: string;
   display_name: string;
   role: TenantUserRole;
-  status: "ACTIVE" | "INVITED" | "DISABLED";
+  status: UserStatus;
   has_password: boolean;
   has_pin: boolean;
   is_active: boolean;
@@ -46,11 +47,80 @@ export type TenantLocationUserCreateRequest = {
   role: TenantUserRole;
   password?: string | null;
   pin?: string | null;
-  status?: "ACTIVE" | "INVITED" | "DISABLED";
+  status?: UserStatus;
   is_active?: boolean;
 };
 
 export type TenantLocationUserUpdateRequest = Partial<TenantLocationUserCreateRequest>;
+
+export type PlatformAdministrator = {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: "platform_admin";
+  status: UserStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlatformAdministratorCreateRequest = {
+  email: string;
+  display_name: string;
+  status?: UserStatus;
+};
+
+export type PlatformAdministratorUpdateRequest = {
+  display_name?: string;
+  status?: UserStatus;
+};
+
+export type PlatformAdministratorCreateResponse = {
+  user: PlatformAdministrator;
+  email_sent: boolean;
+};
+
+export type PlatformAdministratorResetPasswordResponse = {
+  user: PlatformAdministrator;
+  email_sent: boolean;
+};
+
+export type AccountSetupContext = {
+  email: string;
+  display_name: string;
+  kind: "platform_admin" | "location_user";
+  requires_pin: boolean;
+  tenant_id: string | null;
+  location_id: string | null;
+};
+
+export type AccountSetupCompleteRequest = {
+  password?: string | null;
+  pin?: string | null;
+};
+
+export type AccountSetupCompleteResponse = {
+  ok: true;
+  kind: AccountSetupContext["kind"];
+};
+
+export type TenantLocationUserResetPasswordRequest = {
+  password?: string | null;
+  send_email?: boolean;
+};
+
+export type TenantLocationUserResetPasswordResponse = {
+  user: TenantLocationUser;
+  email_sent: boolean;
+};
+
+export type TenantLocationUserResetPinRequest = {
+  pin?: string | null;
+};
+
+export type TenantLocationUserResetPinResponse = {
+  user: TenantLocationUser;
+  generated_pin?: string;
+};
 
 export type LocationStatus = "ACTIVE" | "SUSPENDED";
 export type LocationServiceMode = "TABLE_SERVICE" | "COUNTER_SERVICE";

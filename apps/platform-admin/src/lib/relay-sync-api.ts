@@ -89,6 +89,70 @@ export type TenantLocationUserInput = {
   is_active: boolean;
 };
 
+export type TenantLocationUserResetPasswordInput = {
+  password?: string | null;
+  send_email?: boolean;
+};
+
+export type TenantLocationUserResetPasswordResult = {
+  user: TenantLocationUser;
+  email_sent: boolean;
+};
+
+export type TenantLocationUserResetPinInput = {
+  pin?: string | null;
+};
+
+export type TenantLocationUserResetPinResult = {
+  user: TenantLocationUser;
+  generated_pin?: string;
+};
+
+export type PlatformAdministrator = {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: "platform_admin";
+  status: "ACTIVE" | "INVITED" | "DISABLED";
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlatformAdministratorInput = {
+  email: string;
+  display_name: string;
+  status: PlatformAdministrator["status"];
+};
+
+export type PlatformAdministratorUpdateInput = {
+  display_name?: string;
+  status?: PlatformAdministrator["status"];
+};
+
+export type PlatformAdministratorMutationResult = {
+  user: PlatformAdministrator;
+  email_sent: boolean;
+};
+
+export type AccountSetupContext = {
+  email: string;
+  display_name: string;
+  kind: "platform_admin" | "location_user";
+  requires_pin: boolean;
+  tenant_id: string | null;
+  location_id: string | null;
+};
+
+export type AccountSetupCompleteInput = {
+  password: string;
+  pin?: string | null;
+};
+
+export type AccountSetupCompleteResult = {
+  ok: true;
+  kind: AccountSetupContext["kind"];
+};
+
 export type OnboardingStatus = {
   tenant_id: string;
   location_id: string;
@@ -123,10 +187,64 @@ export type OutputStationInput = {
 };
 
 const configuredUrl = import.meta.env.VITE_RELAY_SYNC_API_URL as string | undefined;
-const configuredAdminToken = import.meta.env.VITE_RELAY_ADMIN_TOKEN as string | undefined;
 
 export function getRelaySyncApiUrl() {
   return (configuredUrl || "http://localhost:3100").replace(/\/$/, "");
+}
+
+export function loadPlatformAdministrators() {
+  return readJson<PlatformAdministrator[]>("/api/admin/platform-administrators", []);
+}
+
+export function createPlatformAdministrator(input: PlatformAdministratorInput) {
+  return writeJson<PlatformAdministratorMutationResult>("/api/admin/platform-administrators", "POST", input);
+}
+
+export function updatePlatformAdministrator(userId: string, input: PlatformAdministratorUpdateInput) {
+  return writeJson<PlatformAdministrator>(
+    "/api/admin/platform-administrators/" + encodeURIComponent(userId),
+    "PATCH",
+    input,
+  );
+}
+
+export function resetPlatformAdministratorPassword(userId: string) {
+  return writeJson<PlatformAdministratorMutationResult>(
+    "/api/admin/platform-administrators/" + encodeURIComponent(userId) + "/reset-password",
+    "POST",
+    {},
+  );
+}
+
+export function archivePlatformAdministrator(userId: string) {
+  return writeJson<PlatformAdministrator>(
+    "/api/admin/platform-administrators/" + encodeURIComponent(userId) + "/archive",
+    "POST",
+    {},
+  );
+}
+
+export function deletePlatformAdministrator(userId: string) {
+  return writeJson<void>(
+    "/api/admin/platform-administrators/" + encodeURIComponent(userId),
+    "DELETE",
+    undefined,
+  );
+}
+
+export function loadAccountSetupContext(token: string) {
+  return readJson<AccountSetupContext>("/api/auth/account-setup/" + encodeURIComponent(token), {
+    email: "",
+    display_name: "",
+    kind: "location_user",
+    requires_pin: true,
+    tenant_id: null,
+    location_id: null,
+  });
+}
+
+export function completeAccountSetup(token: string, input: AccountSetupCompleteInput) {
+  return writeJson<AccountSetupCompleteResult>("/api/auth/account-setup/" + encodeURIComponent(token), "POST", input);
 }
 
 export function loadTenants() {
@@ -235,6 +353,71 @@ export function updateLocationUser(tenantId: string, locationId: string, userId:
   );
 }
 
+export function resetLocationUserPassword(
+  tenantId: string,
+  locationId: string,
+  userId: string,
+  input: TenantLocationUserResetPasswordInput = {},
+) {
+  return writeJson<TenantLocationUserResetPasswordResult>(
+    "/api/admin/tenants/" +
+      encodeURIComponent(tenantId) +
+      "/locations/" +
+      encodeURIComponent(locationId) +
+      "/users/" +
+      encodeURIComponent(userId) +
+      "/reset-password",
+    "POST",
+    input,
+  );
+}
+
+export function resetLocationUserPin(
+  tenantId: string,
+  locationId: string,
+  userId: string,
+  input: TenantLocationUserResetPinInput = {},
+) {
+  return writeJson<TenantLocationUserResetPinResult>(
+    "/api/admin/tenants/" +
+      encodeURIComponent(tenantId) +
+      "/locations/" +
+      encodeURIComponent(locationId) +
+      "/users/" +
+      encodeURIComponent(userId) +
+      "/reset-pin",
+    "POST",
+    input,
+  );
+}
+
+export function archiveLocationUser(tenantId: string, locationId: string, userId: string) {
+  return writeJson<TenantLocationUser>(
+    "/api/admin/tenants/" +
+      encodeURIComponent(tenantId) +
+      "/locations/" +
+      encodeURIComponent(locationId) +
+      "/users/" +
+      encodeURIComponent(userId) +
+      "/archive",
+    "POST",
+    {},
+  );
+}
+
+export function deleteLocationUser(tenantId: string, locationId: string, userId: string) {
+  return writeJson<void>(
+    "/api/admin/tenants/" +
+      encodeURIComponent(tenantId) +
+      "/locations/" +
+      encodeURIComponent(locationId) +
+      "/users/" +
+      encodeURIComponent(userId),
+    "DELETE",
+    undefined,
+  );
+}
+
 export function createOutputStation(tenantId: string, locationId: string, input: OutputStationInput) {
   return writeJson<OutputStation>(
     "/api/admin/tenants/" + encodeURIComponent(tenantId) + "/locations/" + encodeURIComponent(locationId) + "/output-stations",
@@ -262,6 +445,7 @@ export async function deleteOutputStation(tenantId: string, locationId: string, 
     {
       method: "DELETE",
       headers: createHeaders(),
+      credentials: "include",
     }
   );
   await parseJsonResponse(response, undefined);
@@ -271,29 +455,24 @@ export async function deleteOutputStation(tenantId: string, locationId: string, 
 async function readJson<T>(path: string, fallback: T): Promise<T> {
   const response = await fetch(`${getRelaySyncApiUrl()}${path}`, {
     headers: createHeaders(),
+    credentials: "include",
   });
   return parseJsonResponse(response, fallback);
 }
 
-async function writeJson<T>(path: string, method: "POST" | "PATCH", body: unknown): Promise<T> {
+async function writeJson<T>(path: string, method: "POST" | "PATCH" | "DELETE", body: unknown): Promise<T> {
   const response = await fetch(`${getRelaySyncApiUrl()}${path}`, {
     method,
-    headers: createHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body),
+    headers: body === undefined ? createHeaders() : createHeaders({ "Content-Type": "application/json" }),
+    body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: "include",
   });
 
   return parseJsonResponse(response, undefined as T);
 }
 
 function createHeaders(extra: Record<string, string> = {}) {
-  const headers: Record<string, string> = { ...extra };
-  const token = configuredAdminToken?.trim();
-
-  if (token) {
-    headers.Authorization = "Bearer " + token;
-  }
-
-  return headers;
+  return { ...extra };
 }
 
 async function parseJsonResponse<T>(response: Response, fallback: T): Promise<T> {

@@ -1,19 +1,26 @@
 import { pbkdf2Sync, randomBytes } from "node:crypto";
+import type { IncomingHttpHeaders } from "node:http";
 
 import { hashPassword } from "better-auth/crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { auth } from "../auth.js";
 import { getDrizzleDatabase } from "../db/client.js";
-import { accounts, locations, tenantUserLocations, tenantUsers, tenants, users } from "../db/schema.js";
+import { accounts, locations, tenantUserLocations, tenantUsers, tenants, users, verifications } from "../db/schema.js";
 import type {
   TenantLocationUser,
   TenantLocationUserCreateRequest,
+  TenantLocationUserResetPasswordRequest,
+  TenantLocationUserResetPasswordResponse,
+  TenantLocationUserResetPinRequest,
+  TenantLocationUserResetPinResponse,
   TenantLocationUserUpdateRequest,
   TenantUserRole
 } from "../types.js";
 import { triggerLocalMasterBootstrapRefresh } from "./adminSync.js";
+import { sendAccountSetupLink } from "./accountSetupStore.js";
 import { ApiError } from "./errors.js";
+import { requireStaffSession } from "./staffRelayStore.js";
 
 type UserRow = typeof users.$inferSelect;
 type TenantUserRow = typeof tenantUsers.$inferSelect;
@@ -41,6 +48,7 @@ export async function createLocationUser(
   const now = new Date();
   const db = getDrizzleDatabase();
   const passwordHash = input.password !== undefined ? await hashPassword(input.password) : undefined;
+  const internalPassword = generateTemporaryPassword();
   const existingUsers = await db
     .select()
     .from(users)
@@ -52,7 +60,7 @@ export async function createLocationUser(
     await auth.api.signUpEmail({
       body: {
         email: input.email,
-        password: input.password ?? "",
+        password: input.password ?? internalPassword,
         name: input.display_name,
       },
     });
@@ -76,6 +84,7 @@ export async function createLocationUser(
       .set({
         email: input.email,
         name: input.display_name,
+        role: "user",
         status: input.status,
         updatedAt: now,
       })
@@ -122,6 +131,14 @@ export async function createLocationUser(
 
   const result = await requireLocationUser(tenantId, locationId, userId);
   triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+  await sendAccountSetupLink({
+    userId,
+    email: result.email,
+    displayName: result.display_name,
+    kind: "location_user",
+    tenantId,
+    locationId,
+  });
   return result;
 }
 
@@ -150,6 +167,7 @@ export async function updateLocationUser(
       .set({
         email: input.email,
         name: input.display_name,
+        role: "user",
         status: input.status,
         updatedAt: now,
       })
@@ -181,6 +199,214 @@ export async function updateLocationUser(
   const result = await requireLocationUser(tenantId, locationId, userId);
   triggerLocalMasterBootstrapRefresh(tenantId, locationId);
   return result;
+}
+
+export async function resetLocationUserPassword(
+  tenantId: string,
+  locationId: string,
+  userId: string,
+  request: TenantLocationUserResetPasswordRequest = {}
+): Promise<TenantLocationUserResetPasswordResponse> {
+  const current = await requireLocationUserRows(tenantId, locationId, userId);
+  const shouldSendEmail = request.send_email !== false;
+  const now = new Date();
+
+  if (request.password) {
+    const password = normalizeResetPassword(request.password);
+    await getDrizzleDatabase().transaction(async (tx) => {
+      await upsertCredentialPassword(tx, userId, await hashPassword(password), now);
+      await tx.update(users).set({ updatedAt: now }).where(eq(users.id, userId));
+    });
+  } else {
+    await getDrizzleDatabase().update(users).set({ updatedAt: now }).where(eq(users.id, userId));
+  }
+
+  const user = await requireLocationUser(tenantId, locationId, userId);
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+
+  if (shouldSendEmail) {
+    await sendAccountSetupLink({
+      userId,
+      email: current.user.email,
+      displayName: current.user.name,
+      kind: "location_user",
+      tenantId,
+      locationId,
+    });
+  }
+
+  return {
+    user,
+    email_sent: shouldSendEmail,
+  };
+}
+
+export async function resetLocationUserPin(
+  tenantId: string,
+  locationId: string,
+  userId: string,
+  request: TenantLocationUserResetPinRequest = {}
+): Promise<TenantLocationUserResetPinResponse> {
+  await requireLocationUserRows(tenantId, locationId, userId);
+  const explicitPin = normalizeOptionalSecret(request.pin);
+  const pin = explicitPin ?? generatePin();
+
+  if (!/^\d{4,8}$/.test(pin)) {
+    throw new ApiError("PIN must contain 4 to 8 digits.");
+  }
+
+  await getDrizzleDatabase()
+    .update(tenantUserLocations)
+    .set({ pinHash: hashSecret(pin), updatedAt: new Date() })
+    .where(and(
+      eq(tenantUserLocations.tenantId, tenantId),
+      eq(tenantUserLocations.locationId, locationId),
+      eq(tenantUserLocations.userId, userId)
+    ));
+
+  const user = await requireLocationUser(tenantId, locationId, userId);
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+
+  return {
+    user,
+    generated_pin: explicitPin === undefined ? pin : undefined,
+  };
+}
+
+export async function archiveLocationUser(
+  tenantId: string,
+  locationId: string,
+  userId: string
+): Promise<TenantLocationUser> {
+  await requireLocationUserRows(tenantId, locationId, userId);
+  const now = new Date();
+
+  await getDrizzleDatabase().transaction(async (tx) => {
+    await tx
+      .update(users)
+      .set({ status: "DISABLED", updatedAt: now })
+      .where(eq(users.id, userId));
+
+    await tx
+      .update(tenantUserLocations)
+      .set({ isActive: 0, updatedAt: now })
+      .where(and(
+        eq(tenantUserLocations.tenantId, tenantId),
+        eq(tenantUserLocations.locationId, locationId),
+        eq(tenantUserLocations.userId, userId)
+      ));
+  });
+
+  const user = await requireLocationUser(tenantId, locationId, userId);
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+  return user;
+}
+
+export async function deleteLocationUser(
+  tenantId: string,
+  locationId: string,
+  userId: string
+): Promise<void> {
+  await requireLocationUserRows(tenantId, locationId, userId);
+
+  await getDrizzleDatabase().transaction(async (tx) => {
+    await tx
+      .delete(tenantUserLocations)
+      .where(and(
+        eq(tenantUserLocations.tenantId, tenantId),
+        eq(tenantUserLocations.locationId, locationId),
+        eq(tenantUserLocations.userId, userId)
+      ));
+
+    const remainingTenantLocations = await tx
+      .select({ locationId: tenantUserLocations.locationId })
+      .from(tenantUserLocations)
+      .where(and(eq(tenantUserLocations.tenantId, tenantId), eq(tenantUserLocations.userId, userId)))
+      .limit(1);
+
+    if (remainingTenantLocations.length === 0) {
+      await tx
+        .delete(tenantUsers)
+        .where(and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, userId)));
+    }
+
+    const remainingTenantMemberships = await tx
+      .select({ tenantId: tenantUsers.tenantId })
+      .from(tenantUsers)
+      .where(eq(tenantUsers.userId, userId))
+      .limit(1);
+
+    if (remainingTenantMemberships.length === 0) {
+      await tx
+        .delete(verifications)
+        .where(sql`${verifications.identifier} like ${"account_setup:%"} and ${verifications.value}::jsonb -> 'payload' ->> 'user_id' = ${userId}`);
+      await tx.delete(users).where(eq(users.id, userId));
+    }
+  });
+
+  triggerLocalMasterBootstrapRefresh(tenantId, locationId);
+}
+
+export async function listOwnerLocationUsers(headers: IncomingHttpHeaders, locationId: string): Promise<TenantLocationUser[]> {
+  const session = await requireOwnerUserSession(headers, locationId);
+  return listLocationUsers(session.tenant_id, locationId);
+}
+
+export async function createOwnerLocationUser(
+  headers: IncomingHttpHeaders,
+  locationId: string,
+  request: TenantLocationUserCreateRequest
+): Promise<TenantLocationUser> {
+  const session = await requireOwnerUserSession(headers, locationId);
+  return createLocationUser(session.tenant_id, locationId, request);
+}
+
+export async function updateOwnerLocationUser(
+  headers: IncomingHttpHeaders,
+  locationId: string,
+  userId: string,
+  request: TenantLocationUserUpdateRequest
+): Promise<TenantLocationUser> {
+  const session = await requireOwnerUserSession(headers, locationId);
+  return updateLocationUser(session.tenant_id, locationId, userId, request);
+}
+
+export async function resetOwnerLocationUserPassword(
+  headers: IncomingHttpHeaders,
+  locationId: string,
+  userId: string,
+  request: TenantLocationUserResetPasswordRequest = {}
+): Promise<TenantLocationUserResetPasswordResponse> {
+  const session = await requireOwnerUserSession(headers, locationId);
+  return resetLocationUserPassword(session.tenant_id, locationId, userId, request);
+}
+
+export async function resetOwnerLocationUserPin(
+  headers: IncomingHttpHeaders,
+  locationId: string,
+  userId: string,
+  request: TenantLocationUserResetPinRequest = {}
+): Promise<TenantLocationUserResetPinResponse> {
+  const session = await requireOwnerUserSession(headers, locationId);
+  return resetLocationUserPin(session.tenant_id, locationId, userId, request);
+}
+
+export async function archiveOwnerLocationUser(
+  headers: IncomingHttpHeaders,
+  locationId: string,
+  userId: string
+): Promise<TenantLocationUser> {
+  const session = await requireOwnerUserSession(headers, locationId);
+  return archiveLocationUser(session.tenant_id, locationId, userId);
+}
+
+export async function deleteOwnerLocationUser(
+  headers: IncomingHttpHeaders,
+  locationId: string,
+  userId: string
+): Promise<void> {
+  const session = await requireOwnerUserSession(headers, locationId);
+  return deleteLocationUser(session.tenant_id, locationId, userId);
 }
 
 export async function listBootstrapUsers(tenantId: string, locationId: string) {
@@ -265,7 +491,7 @@ async function requireLocation(tenantId: string, locationId: string) {
   if (!location[0]) throw new ApiError("Location not found.", 404);
 }
 
-function normalizeUserInput(request: TenantLocationUserCreateRequest, isCreate: boolean) {
+function normalizeUserInput(request: TenantLocationUserCreateRequest, _isCreate: boolean) {
   const email = request.email?.trim().toLowerCase() ?? "";
   const displayName = request.display_name?.trim() ?? "";
   const role = request.role;
@@ -297,10 +523,6 @@ function normalizeUserInput(request: TenantLocationUserCreateRequest, isCreate: 
     throw new ApiError("PIN must contain 4 to 8 digits.");
   }
 
-  if (isCreate && request.password === undefined) {
-    throw new ApiError("Initial password is required.");
-  }
-
   return {
     email,
     display_name: displayName,
@@ -319,6 +541,34 @@ function normalizeOptionalSecret(value: string | null | undefined) {
 
   const normalized = value?.trim() ?? "";
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeResetPassword(value: string | null | undefined) {
+  const password = normalizeOptionalSecret(value) ?? generateTemporaryPassword();
+
+  if (password.length < 8) {
+    throw new ApiError("Password must contain at least 8 characters.");
+  }
+
+  return password;
+}
+
+function generateTemporaryPassword() {
+  return randomBytes(18).toString("base64url");
+}
+
+function generatePin() {
+  return String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, "0");
+}
+
+async function requireOwnerUserSession(headers: IncomingHttpHeaders, locationId: string) {
+  const session = await requireStaffSession(headers, locationId);
+
+  if (session.role !== "OWNER" && session.role !== "MANAGER") {
+    throw new ApiError("Owner or manager role is required.", 403);
+  }
+
+  return session;
 }
 
 function hashSecret(secret: string) {

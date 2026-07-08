@@ -22,11 +22,13 @@ import type { PosOrderSnapshot } from "../store/storeState.js";
 
 process.env.LOCAL_MASTER_DB_PATH = join(mkdtempSync(join(tmpdir(), "easytable-localmaster-test-")), "local-master.sqlite3");
 process.env.LOCAL_MASTER_DISABLE_POWERSYNC = "1";
+process.env.LOCAL_MASTER_DISABLE_NATS = "1";
 
 const { buildServer } = await import("../server.js");
 const { getDrizzleDatabase } = await import("../db/client.js");
 const { localState } = await import("../db/schema.js");
 const { pollRelayCommands } = await import("../relayCommandWorker.js");
+const { eq } = await import("drizzle-orm");
 const {
   payments,
   persistPayments,
@@ -710,6 +712,108 @@ test("unsupported relay command is ACKed as failed after local rejection", async
   const capturedAck = ackBody as { status?: string; error?: string };
   assert.equal(capturedAck.status, "failed");
   assert.equal(capturedAck.error, "Unsupported relay command type: UNSUPPORTED_TEST_COMMAND");
+});
+
+test("ADMIN_BOOTSTRAP_REFRESH updates the local bootstrap user projection", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const now = Date.now();
+  const commandId = "relay_admin_bootstrap_refresh";
+  let ackBody: unknown = null;
+
+  writeCloudBindingForTest({
+    localMasterInstanceId: "lm_test_admin_refresh",
+    now,
+    relayBaseUrl: "http://relay.test",
+    relayToken: "relay_token_admin_refresh"
+  });
+
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+
+    if (url.endsWith("/api/local-masters/commands/pending")) {
+      return jsonResponse({
+        data: [{
+          command_id: commandId,
+          tenant_id: "tenant_basilica",
+          location_id: "loc_basilica_main",
+          local_master_instance_id: "lm_test_admin_refresh",
+          type: "ADMIN_BOOTSTRAP_REFRESH",
+          status: "delivered",
+          payload: { triggered_at: new Date(now).toISOString() }
+        }]
+      });
+    }
+
+    if (url.endsWith("/api/local-masters/bootstrap")) {
+      return jsonResponse({
+        tenant: {
+          id: "tenant_basilica",
+          name: "Basilica Test",
+          slug: "basilica-test",
+          email: null,
+          phone: null,
+          website: null,
+          status: "ACTIVE",
+          created_at: new Date(now).toISOString(),
+          updated_at: new Date(now).toISOString()
+        },
+        location: {
+          id: "loc_basilica_main",
+          tenant_id: "tenant_basilica",
+          name: "Basilica Main",
+          slug: "basilica-main",
+          address: null,
+          local_master_instance_id: "lm_test_admin_refresh",
+          service_mode: "TABLE_SERVICE",
+          status: "ACTIVE",
+          created_at: new Date(now).toISOString(),
+          updated_at: new Date(now).toISOString()
+        },
+        service_mode: "TABLE_SERVICE",
+        output_stations: [],
+        users: [{
+          user_id: "user_bootstrap_refresh",
+          email: "refresh@example.test",
+          display_name: "Refresh User",
+          role: "MANAGER",
+          status: "ACTIVE",
+          pin_hash: "pbkdf2_sha256$120000$salt$hash",
+          is_active: true
+        }],
+        bootstrapped_at: new Date(now).toISOString()
+      });
+    }
+
+    if (url.endsWith("/api/local-masters/commands/" + commandId + "/ack")) {
+      ackBody = JSON.parse(String(init?.body ?? "{}"));
+      return jsonResponse({ ok: true });
+    }
+
+    return jsonResponse({ ok: true });
+  };
+  console.warn = () => undefined;
+
+  try {
+    await pollRelayCommands();
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+
+  const bootstrapRow = getDrizzleDatabase()
+    .select()
+    .from(localState)
+    .where(eq(localState.key, "localMaster.bootstrap"))
+    .limit(1)
+    .get();
+  const bootstrap = JSON.parse(bootstrapRow?.valueJson ?? "{}") as { users?: Array<{ user_id: string; pin_hash: string | null }> };
+  const capturedAck = ackBody as { status?: string; result?: { refreshed?: boolean } };
+
+  assert.equal(capturedAck.status, "accepted");
+  assert.equal(capturedAck.result?.refreshed, true);
+  assert.equal(bootstrap.users?.[0]?.user_id, "user_bootstrap_refresh");
+  assert.equal(bootstrap.users?.[0]?.pin_hash, "pbkdf2_sha256$120000$salt$hash");
 });
 
 test("unpaired PowerSync does not block local REST reads", async () => {

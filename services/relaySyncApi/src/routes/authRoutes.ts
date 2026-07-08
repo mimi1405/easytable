@@ -4,6 +4,8 @@ import { eq } from "drizzle-orm";
 import { auth } from "../auth.js";
 import { getDrizzleDatabase } from "../db/client.js";
 import { tenantUsers, tenants } from "../db/schema.js";
+import { completeAccountSetup, getAccountSetupContext } from "../store/accountSetupStore.js";
+import type { AccountSetupCompleteRequest } from "../types.js";
 
 export async function registerAuthRoutes(app: FastifyInstance) {
   app.get("/api/auth/me", async (request, reply) => {
@@ -41,6 +43,14 @@ export async function registerAuthRoutes(app: FastifyInstance) {
       tenants: userTenants,
     };
   });
+
+  app.get<{ Params: { token: string } }>("/api/auth/account-setup/:token", async (request) =>
+    getAccountSetupContext(request.params.token)
+  );
+
+  app.post<{ Params: { token: string }; Body: AccountSetupCompleteRequest }>("/api/auth/account-setup/:token", async (request) =>
+    completeAccountSetup(request.params.token, request.body ?? {})
+  );
 
   app.all("/api/auth/*", async (request, reply) => {
     const host = request.headers.host ?? "localhost";

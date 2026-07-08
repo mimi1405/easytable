@@ -152,6 +152,62 @@ export type CreatedOrderSnapshot = {
 
 export type ConnectionMode = "LOCAL" | "RELAY" | "OFFLINE";
 
+export type TenantUserRole = "OWNER" | "MANAGER" | "STAFF" | "KDS" | "POS_OPERATOR";
+
+export type TenantLocationUser = {
+  user_id: string;
+  tenant_id: string;
+  location_id: string;
+  email: string;
+  display_name: string;
+  role: TenantUserRole;
+  status: "ACTIVE" | "INVITED" | "DISABLED";
+  has_password: boolean;
+  has_pin: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TenantLocationUserInput = {
+  email: string;
+  display_name: string;
+  role: TenantUserRole;
+  password?: string | null;
+  pin?: string | null;
+  status: TenantLocationUser["status"];
+  is_active: boolean;
+};
+
+export type TenantLocationUserResetPasswordResult = {
+  user: TenantLocationUser;
+  email_sent: boolean;
+};
+
+export type TenantLocationUserResetPinResult = {
+  user: TenantLocationUser;
+  generated_pin?: string;
+};
+
+export type AccountSetupContext = {
+  email: string;
+  display_name: string;
+  kind: "platform_admin" | "location_user";
+  requires_pin: boolean;
+  tenant_id: string | null;
+  location_id: string | null;
+};
+
+export type AccountSetupCompleteInput = {
+  password: string;
+  pin?: string | null;
+};
+
+export type AccountSetupCompleteResult = {
+  ok: true;
+  kind: AccountSetupContext["kind"];
+};
+
 export type StaffRelayCommand = {
   command_id: string;
   status: "pending" | "delivered" | "accepted" | "failed";
@@ -349,6 +405,10 @@ export function getLocalMasterUrl() {
 
 export function getRelaySyncUrl() {
   return configuredRelayUrl?.replace(/\/$/, "") ?? "";
+}
+
+export function getAccountSetupRelaySyncUrl() {
+  return getRelaySyncUrl() || "http://localhost:3100";
 }
 
 export async function detectConnectionMode(): Promise<ConnectionMode> {
@@ -945,6 +1005,105 @@ export async function runOwnerCatalogActionForConnection(
   throw new Error(describeConnectionUnavailable());
 }
 
+export async function loadOwnerUsersForConnection(connectionMode: ConnectionMode): Promise<TenantLocationUser[]> {
+  requireCloudUserManagementAvailable(connectionMode);
+  const locationId = requireStaffRelayLocationId();
+  return readRelayJson<TenantLocationUser[]>("/api/owner/locations/" + encodeURIComponent(locationId) + "/users");
+}
+
+export async function createOwnerUserForConnection(
+  connectionMode: ConnectionMode,
+  input: TenantLocationUserInput,
+): Promise<TenantLocationUser> {
+  requireCloudUserManagementAvailable(connectionMode);
+  const locationId = requireStaffRelayLocationId();
+  return writeRelayJson<TenantLocationUser>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/users",
+    "POST",
+    input,
+  );
+}
+
+export async function updateOwnerUserForConnection(
+  connectionMode: ConnectionMode,
+  userId: string,
+  input: Partial<TenantLocationUserInput>,
+): Promise<TenantLocationUser> {
+  requireCloudUserManagementAvailable(connectionMode);
+  const locationId = requireStaffRelayLocationId();
+  return writeRelayJson<TenantLocationUser>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/users/" + encodeURIComponent(userId),
+    "PATCH",
+    input,
+  );
+}
+
+export async function resetOwnerUserPasswordForConnection(
+  connectionMode: ConnectionMode,
+  userId: string,
+): Promise<TenantLocationUserResetPasswordResult> {
+  requireCloudUserManagementAvailable(connectionMode);
+  const locationId = requireStaffRelayLocationId();
+  return writeRelayJson<TenantLocationUserResetPasswordResult>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/users/" + encodeURIComponent(userId) + "/reset-password",
+    "POST",
+    {},
+  );
+}
+
+export async function resetOwnerUserPinForConnection(
+  connectionMode: ConnectionMode,
+  userId: string,
+): Promise<TenantLocationUserResetPinResult> {
+  requireCloudUserManagementAvailable(connectionMode);
+  const locationId = requireStaffRelayLocationId();
+  return writeRelayJson<TenantLocationUserResetPinResult>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/users/" + encodeURIComponent(userId) + "/reset-pin",
+    "POST",
+    {},
+  );
+}
+
+export async function archiveOwnerUserForConnection(
+  connectionMode: ConnectionMode,
+  userId: string,
+): Promise<TenantLocationUser> {
+  requireCloudUserManagementAvailable(connectionMode);
+  const locationId = requireStaffRelayLocationId();
+  return writeRelayJson<TenantLocationUser>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/users/" + encodeURIComponent(userId) + "/archive",
+    "POST",
+    {},
+  );
+}
+
+export async function deleteOwnerUserForConnection(
+  connectionMode: ConnectionMode,
+  userId: string,
+): Promise<void> {
+  requireCloudUserManagementAvailable(connectionMode);
+  const locationId = requireStaffRelayLocationId();
+  return writeRelayJson<void>(
+    "/api/owner/locations/" + encodeURIComponent(locationId) + "/users/" + encodeURIComponent(userId),
+    "DELETE",
+  );
+}
+
+export function loadAccountSetupContext(token: string) {
+  return readAccountSetupJson<AccountSetupContext>("/api/auth/account-setup/" + encodeURIComponent(token), {
+    email: "",
+    display_name: "",
+    kind: "location_user",
+    requires_pin: true,
+    tenant_id: null,
+    location_id: null,
+  });
+}
+
+export function completeAccountSetup(token: string, input: AccountSetupCompleteInput) {
+  return writeAccountSetupJson<AccountSetupCompleteResult>("/api/auth/account-setup/" + encodeURIComponent(token), input);
+}
+
 export function createCatalogProduct(input: CatalogProductInput) {
   return writeJson<CatalogProduct>("/api/catalog/products", "POST", input);
 }
@@ -1059,14 +1218,33 @@ async function readRelayJson<T>(path: string): Promise<T> {
   return parseJsonResponse(response, undefined as T);
 }
 
-async function writeRelayJson<T>(path: string, method: "POST", body: unknown): Promise<T> {
-  const response = await fetch(`${requireRelaySyncUrl()}${path}`, {
-    method,
+async function readAccountSetupJson<T>(path: string, fallback: T): Promise<T> {
+  const response = await fetch(`${getAccountSetupRelaySyncUrl()}${path}`, {
+    credentials: "include",
+  });
+  return parseJsonResponse(response, fallback);
+}
+
+async function writeAccountSetupJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${getAccountSetupRelaySyncUrl()}${path}`, {
+    method: "POST",
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+  });
+  return parseJsonResponse(response, undefined as T);
+}
+
+async function writeRelayJson<T>(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
+  const response = await fetch(`${requireRelaySyncUrl()}${path}`, {
+    method,
+    credentials: "include",
+    headers: body === undefined ? undefined : {
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   return parseJsonResponse(response, undefined as T);
 }
@@ -1114,6 +1292,16 @@ function requireRelaySyncUrl() {
     throw new Error("Relay URL ist nicht konfiguriert.");
   }
   return relayUrl;
+}
+
+function requireCloudUserManagementAvailable(connectionMode: ConnectionMode) {
+  if (!getRelaySyncUrl() || !configuredRelayLocationId) {
+    throw new Error("Mitarbeiterverwaltung benoetigt Relay/Cloud, weil Better Auth dort final gespeichert wird.");
+  }
+
+  if (connectionMode === "OFFLINE") {
+    throw new Error("Mitarbeiterverwaltung ist offline nicht final moeglich.");
+  }
 }
 
 function withOrderRequestId<T extends { request_id?: string; lines: BasketLine[]; table_context: TableContext }>(request: T): T & { request_id: string } {

@@ -3,8 +3,8 @@ import { afterEach, test } from "node:test";
 
 import { publishCommandEvent, resetNatsForTest, setNatsConnectForTest } from "./nats.js";
 
-afterEach(() => {
-  resetNatsForTest();
+afterEach(async () => {
+  await resetNatsForTest();
 });
 
 test("publishCommandEvent does not throw when NATS is unavailable", async () => {

@@ -13,17 +13,15 @@ import {
 import { Input } from "@easytable/ui/components/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@easytable/ui/components/table";
 
-import type { Location, Tenant, TenantLocationUser, TenantLocationUserInput, TenantUserRole } from "../../../lib/relay-sync-api";
+import type { TenantLocationUser, TenantLocationUserInput, TenantUserRole } from "../../../lib/local-master";
 
-type LocationUsersSectionProps = {
-  tenant: Tenant | null;
-  location: Location | null;
+type EmployeesViewProps = {
   users: TenantLocationUser[];
   isLoading: boolean;
-  onReload: () => void;
-  onCreate: (input: TenantLocationUserInput) => Promise<void>;
   onArchive: (userId: string) => Promise<void>;
+  onCreate: (input: TenantLocationUserInput) => Promise<void>;
   onDelete: (userId: string) => Promise<void>;
+  onReload: () => void;
   onResetPassword: (userId: string) => Promise<void>;
   onResetPin: (userId: string) => Promise<string | null | undefined>;
   onUpdate: (userId: string, input: Partial<TenantLocationUserInput>) => Promise<void>;
@@ -31,64 +29,61 @@ type LocationUsersSectionProps = {
 
 const roles: TenantUserRole[] = ["OWNER", "MANAGER", "STAFF", "KDS", "POS_OPERATOR"];
 
-export function LocationUsersSection({
-  tenant,
-  location,
+export function EmployeesView({
   users,
   isLoading,
-  onReload,
-  onCreate,
   onArchive,
+  onCreate,
   onDelete,
+  onReload,
   onResetPassword,
   onResetPin,
-  onUpdate
-}: LocationUsersSectionProps) {
-  const canManage = Boolean(tenant && location);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  onUpdate,
+}: EmployeesViewProps) {
+  const [message, setMessage] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
 
-  async function runUserReset(user: TenantLocationUser, kind: "password" | "pin") {
+  async function runReset(user: TenantLocationUser, kind: "password" | "pin") {
     setBusyUserId(user.user_id + ":" + kind);
-    setActionMessage(null);
+    setMessage(null);
 
     try {
       if (kind === "password") {
         await onResetPassword(user.user_id);
-        setActionMessage("Setup-Link fuer " + user.display_name + " wurde per E-Mail verschickt.");
+        setMessage("Setup-Link fuer " + user.display_name + " wurde per E-Mail verschickt.");
       } else {
         const generatedPin = await onResetPin(user.user_id);
-        setActionMessage(
+        setMessage(
           generatedPin
             ? "Neue PIN fuer " + user.display_name + ": " + generatedPin
             : "PIN fuer " + user.display_name + " wurde aktualisiert."
         );
       }
     } catch (resetError) {
-      setActionMessage(resetError instanceof Error ? resetError.message : "Reset fehlgeschlagen.");
+      setMessage(resetError instanceof Error ? resetError.message : "Reset fehlgeschlagen.");
     } finally {
       setBusyUserId(null);
     }
   }
 
-  async function runUserLifecycleAction(user: TenantLocationUser, kind: "archive" | "delete") {
+  async function runLifecycleAction(user: TenantLocationUser, kind: "archive" | "delete") {
     if (kind === "delete" && !window.confirm("Mitarbeiter " + user.display_name + " wirklich aus dieser Location loeschen?")) {
       return;
     }
 
     setBusyUserId(user.user_id + ":" + kind);
-    setActionMessage(null);
+    setMessage(null);
 
     try {
       if (kind === "archive") {
         await onArchive(user.user_id);
-        setActionMessage(user.display_name + " wurde archiviert.");
+        setMessage(user.display_name + " wurde archiviert.");
       } else {
         await onDelete(user.user_id);
-        setActionMessage(user.display_name + " wurde geloescht.");
+        setMessage(user.display_name + " wurde geloescht.");
       }
     } catch (actionError) {
-      setActionMessage(actionError instanceof Error ? actionError.message : "Aktion fehlgeschlagen.");
+      setMessage(actionError instanceof Error ? actionError.message : "Aktion fehlgeschlagen.");
     } finally {
       setBusyUserId(null);
     }
@@ -98,24 +93,20 @@ export function LocationUsersSection({
     <section className="rounded-md border bg-card text-card-foreground shadow-sm">
       <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold tracking-normal">User</h2>
-          <p className="text-sm text-muted-foreground">
-            {location ? `Benutzer fuer ${location.name}` : "Erst eine Location auswaehlen."}
-          </p>
+          <h2 className="text-xl font-semibold tracking-normal">Mitarbeiter</h2>
+          <p className="text-sm text-muted-foreground">Benutzer, Rollen, Setup-Link und POS-PIN.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!canManage || isLoading} onClick={onReload} type="button" variant="outline">
+          <Button disabled={isLoading} onClick={onReload} type="button" variant="outline">
             <RefreshCw className={isLoading ? "size-4 animate-spin" : "size-4"} />
             Laden
           </Button>
-          <UserDialog disabled={!canManage} mode="create" onSubmit={onCreate} />
+          <EmployeeDialog mode="create" onSubmit={onCreate} />
         </div>
       </div>
 
       <div className="p-2 sm:p-3">
-        {actionMessage ? (
-          <p className="mb-3 rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground">{actionMessage}</p>
-        ) : null}
+        {message ? <p className="mb-3 rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground">{message}</p> : null}
         <div className="overflow-hidden rounded-md border">
           <Table>
             <TableHeader>
@@ -124,7 +115,7 @@ export function LocationUsersSection({
                 <TableHead>Rolle</TableHead>
                 <TableHead>Login</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-24 text-right">Aktionen</TableHead>
+                <TableHead className="w-28 text-right">Aktionen</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -152,30 +143,18 @@ export function LocationUsersSection({
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1">
-                      <Button
-                        disabled={!canManage || busyUserId !== null}
-                        onClick={() => runUserReset(user, "password")}
-                        size="icon-sm"
-                        type="button"
-                        variant="ghost"
-                      >
+                      <Button disabled={busyUserId !== null} onClick={() => runReset(user, "password")} size="icon-sm" type="button" variant="ghost">
                         <KeyRound className={busyUserId === user.user_id + ":password" ? "size-4 animate-spin" : "size-4"} />
                         <span className="sr-only">Passwort zuruecksetzen</span>
                       </Button>
-                      <Button
-                        disabled={!canManage || busyUserId !== null}
-                        onClick={() => runUserReset(user, "pin")}
-                        size="icon-sm"
-                        type="button"
-                        variant="ghost"
-                      >
+                      <Button disabled={busyUserId !== null} onClick={() => runReset(user, "pin")} size="icon-sm" type="button" variant="ghost">
                         <Hash className={busyUserId === user.user_id + ":pin" ? "size-4 animate-spin" : "size-4"} />
                         <span className="sr-only">PIN zuruecksetzen</span>
                       </Button>
-                      <UserDialog mode="edit" onSubmit={(input) => onUpdate(user.user_id, input)} user={user} />
+                      <EmployeeDialog mode="edit" onSubmit={(input) => onUpdate(user.user_id, input)} user={user} />
                       <Button
-                        disabled={!canManage || busyUserId !== null || (!user.is_active && user.status === "DISABLED")}
-                        onClick={() => runUserLifecycleAction(user, "archive")}
+                        disabled={busyUserId !== null || (!user.is_active && user.status === "DISABLED")}
+                        onClick={() => runLifecycleAction(user, "archive")}
                         size="icon-sm"
                         type="button"
                         variant="ghost"
@@ -183,13 +162,7 @@ export function LocationUsersSection({
                         <Archive className={busyUserId === user.user_id + ":archive" ? "size-4 animate-spin" : "size-4"} />
                         <span className="sr-only">Archivieren</span>
                       </Button>
-                      <Button
-                        disabled={!canManage || busyUserId !== null}
-                        onClick={() => runUserLifecycleAction(user, "delete")}
-                        size="icon-sm"
-                        type="button"
-                        variant="ghost"
-                      >
+                      <Button disabled={busyUserId !== null} onClick={() => runLifecycleAction(user, "delete")} size="icon-sm" type="button" variant="ghost">
                         <Trash2 className={busyUserId === user.user_id + ":delete" ? "size-4 animate-spin" : "size-4"} />
                         <span className="sr-only">Loeschen</span>
                       </Button>
@@ -201,7 +174,7 @@ export function LocationUsersSection({
               {!isLoading && users.length === 0 ? (
                 <TableRow>
                   <TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>
-                    {location ? "Keine User vorbereitet." : "Keine Location ausgewaehlt."}
+                    Keine Mitarbeiter vorhanden.
                   </TableCell>
                 </TableRow>
               ) : null}
@@ -209,7 +182,7 @@ export function LocationUsersSection({
               {isLoading ? (
                 <TableRow>
                   <TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>
-                    User werden geladen.
+                    Mitarbeiter werden geladen.
                   </TableCell>
                 </TableRow>
               ) : null}
@@ -221,7 +194,7 @@ export function LocationUsersSection({
   );
 }
 
-function UserDialog({
+function EmployeeDialog({
   disabled = false,
   mode,
   onSubmit,
@@ -233,14 +206,14 @@ function UserDialog({
   user?: TenantLocationUser;
 }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(() => createUserForm(user));
+  const [form, setForm] = useState(() => createEmployeeForm(user));
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isEdit = mode === "edit";
 
   useEffect(() => {
     if (open) {
-      setForm(createUserForm(user));
+      setForm(createEmployeeForm(user));
       setError(null);
     }
   }, [open, user]);
@@ -262,7 +235,7 @@ function UserDialog({
       });
       setOpen(false);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "User konnte nicht gespeichert werden.");
+      setError(submitError instanceof Error ? submitError.message : "Mitarbeiter konnte nicht gespeichert werden.");
     } finally {
       setIsSaving(false);
     }
@@ -272,12 +245,12 @@ function UserDialog({
     <Dialog onOpenChange={setOpen} open={open}>
       <Button disabled={disabled} onClick={() => setOpen(true)} size={isEdit ? "icon-sm" : "default"} type="button" variant={isEdit ? "ghost" : "default"}>
         {isEdit ? <Pencil className="size-4" /> : <UserPlus className="size-4" />}
-        {!isEdit ? "User" : <span className="sr-only">Bearbeiten</span>}
+        {!isEdit ? "Mitarbeiter" : <span className="sr-only">Bearbeiten</span>}
       </Button>
       <DialogContent>
         <form className="grid gap-4" onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>{isEdit ? "User bearbeiten" : "User vorbereiten"}</DialogTitle>
+            <DialogTitle>{isEdit ? "Mitarbeiter bearbeiten" : "Mitarbeiter anlegen"}</DialogTitle>
           </DialogHeader>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -335,7 +308,7 @@ function UserDialog({
   );
 }
 
-function createUserForm(user?: TenantLocationUser) {
+function createEmployeeForm(user?: TenantLocationUser) {
   return {
     email: user?.email ?? "",
     display_name: user?.display_name ?? "",

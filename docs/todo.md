@@ -1,7 +1,7 @@
 ```markdown
 # TODOs
 
-- [ ] Add email / pw-reset functionality library for email
+- [x] Add email / pw-reset functionality library for email
 	- Use https://resend.com/ lib
 	- include api side (localMaster and relaySyncApi)
 	- Add in pfadmin functionality for pw and pin reset for employees

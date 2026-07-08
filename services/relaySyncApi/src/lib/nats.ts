@@ -37,7 +37,12 @@ export function setNatsConnectForTest(nextConnect: typeof connect) {
   natsConn = null;
 }
 
-export function resetNatsForTest() {
+export async function resetNatsForTest() {
+  const current = natsConn;
   connectNats = connect;
   natsConn = null;
+
+  if (current && typeof current.close === "function") {
+    await current.close();
+  }
 }

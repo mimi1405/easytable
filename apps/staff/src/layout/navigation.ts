@@ -1,5 +1,5 @@
 export type StaffModule = "owner" | "staff" | "kds";
-export type OwnerCatalogSection = "products" | "categories" | "taxes" | "locations";
+export type OwnerCatalogSection = "products" | "categories" | "taxes" | "locations" | "employees";
 export type StaffScreen = "orders" | "order" | "pickups";
 
 export type StaffTableContext = {
