@@ -14,7 +14,18 @@ pnpm-debug.log*
 lerna-debug.log*
 
 # Local env/config
+.env
+.env.*
+!.env.example
 *.local
+
+# Local SQLite data
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
 
 # OS/editor
 .DS_Store
@@ -26,4 +37,3 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
-services/relaySyncApi/.env
