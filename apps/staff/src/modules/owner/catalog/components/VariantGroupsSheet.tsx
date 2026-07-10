@@ -42,8 +42,8 @@ export function VariantGroupsSheet({ mode, product, category, products = [], gro
       </SheetTrigger>
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl" side="right">
         <SheetHeader>
-          <SheetTitle>Varianten fuer {targetName}</SheetTitle>
-          <SheetDescription>{mode === "CATEGORY" ? "Kategorie-Gruppen werden an alle Produkte dieser Kategorie vererbt." : "Produkt-Gruppen gelten nur fuer dieses Produkt; Kategorie-Gruppen sind geerbt."}</SheetDescription>
+          <SheetTitle>Varianten für {targetName}</SheetTitle>
+          <SheetDescription>{mode === "CATEGORY" ? "Varianten werden an alle Produkte dieser Kategorie übergeben." : "Produkt-Gruppen gelten nur für dieses Produkt; Kategorie-Gruppen werden geerbt von der zugehörigen Kategorie."}</SheetDescription>
         </SheetHeader>
         <div className="flex flex-col gap-4 px-4 pb-4">
           {inheritedGroups.length > 0 ? <GroupList title="Geerbte Gruppen" groups={inheritedGroups} readonly /> : null}
@@ -73,11 +73,9 @@ function GroupList({ title, groups, readonly = false, onEdit, onDelete }: { titl
 }
 
 function VariantGroupForm({ mode, product, category, products, group, onSubmit, onCancel }: { mode: "PRODUCT" | "CATEGORY"; product?: CatalogProduct; category?: CatalogCategory; products: CatalogProduct[]; group: ProductVariantGroup | null; onSubmit: (input: ProductVariantGroupInput) => Promise<void>; onCancel: () => void }) {
-  const [name, setName] = useState(group?.name ?? "Tabak");
+  const [name, setName] = useState(group?.name ?? "");
   const [productId, setProductId] = useState(group?.product_id ?? product?.id ?? products[0]?.id ?? "");
   const [items, setItems] = useState<ItemDraft[]>(group?.items.map((item) => ({ id: item.id, name: item.name, price_delta: item.price_delta, is_default: item.is_default, sort_order: item.sort_order })) ?? [
-    { name: "Tabak 1", price_delta: 400, is_default: false, sort_order: 10 },
-    { name: "Tabak 2", price_delta: 0, is_default: true, sort_order: 20 }
   ]);
   const basicProducts = useMemo(() => products.filter((entry) => entry.product_type === "BASIC"), [products]);
 
@@ -89,6 +87,14 @@ function VariantGroupForm({ mode, product, category, products, group, onSubmit, 
     <h3 className="mb-3 font-semibold">{group ? "Variantengruppe bearbeiten" : "Variantengruppe erstellen"}</h3>
     <div className="grid gap-3"><Label>Name<Input value={name} onChange={(event) => setName(event.target.value)} /></Label>{mode === "PRODUCT" && !product ? <Label>Produkt<Select value={productId} onValueChange={setProductId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{basicProducts.map((entry) => <SelectItem key={entry.id} value={entry.id}>{entry.name}</SelectItem>)}</SelectContent></Select></Label> : null}</div>
     <div className="mt-4 flex flex-col gap-2">{items.map((item, index) => <div className="grid grid-cols-[1fr_7rem_2rem] gap-2" key={item.id ?? index}><Input value={item.name} onChange={(event) => updateItem(index, { name: event.target.value })} /><Input type="number" step="0.05" value={(item.price_delta / 100).toFixed(2)} onChange={(event) => updateItem(index, { price_delta: Math.round(Number(event.target.value) * 100) })} /><Button onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))} size="icon-sm" type="button" variant="ghost"><Trash2 className="size-4" /></Button></div>)}</div>
-    <div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => setItems((current) => [...current, { name: "Neue Variante", price_delta: 0, is_default: false, sort_order: (current.length + 1) * 10 }])} type="button" variant="outline">Item hinzufügen</Button><Button type="submit">Speichern</Button>{group ? <Button onClick={onCancel} type="button" variant="ghost">Abbrechen</Button> : null}</div>
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Button 
+        onClick={() => setItems((current) => [...current, { name: "", price_delta: 0, is_default: false, sort_order: (current.length + 1) * 10 }])} type="button" variant="outline">Item hinzufügen
+        </Button>
+        <Button 
+        type="submit">Speichern</Button>
+        {group ? <Button onClick={onCancel} type="button" variant="ghost">Abbrechen
+        </Button> : null}
+      </div>
   </form>;
 }
