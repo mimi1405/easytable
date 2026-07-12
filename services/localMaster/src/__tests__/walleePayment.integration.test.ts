@@ -38,6 +38,7 @@ const { buildServer } = await import("../server.js");
 const { getDrizzleDatabase } = await import("../db/client.js");
 const { localWalleeConfig, orderSnapshots, paymentAttempts, paymentReceipts, paymentRecoveryJobs, salesLedgerEntries } = await import("../db/schema.js");
 const { pullAndActivateWalleeConfig, getWalleeConfigStatus } = await import("../store/walleeConfigStore.js");
+const { WalleeClient } = await import("../store/walleeClient.js");
 const { getLocalMasterIdentity } = await import("../pairing.js");
 const { eq } = await import("drizzle-orm");
 const app = await buildServer({ logger: false });
@@ -64,6 +65,12 @@ test("cash payments stay local and are idempotent", async () => {
 test("legacy payment endpoint is removed", async () => {
   const response = await app.inject({ method: "POST", url: "/api/mock-payments/complete", payload: { request: cashRequest("legacy", 500) } });
   assert.equal(response.statusCode, 404);
+});
+
+test("terminal validation resolves a stale entity id through the terminal identifier", async () => {
+  const client = new WalleeClient({ spaceId: "30140", applicationUserId: "12345", authenticationKey });
+  const terminal = await client.resolveTerminal({ terminalId: "missing", terminalIdentifier: "89990002303" });
+  assert.equal(String(terminal.id), "32581002");
 });
 
 test("localMaster executes Wallee create, confirm, perform, read and receipts directly", async () => {
@@ -248,6 +255,24 @@ test("invalid new terminal config preserves the last active version", async () =
   assert.equal(status.active_config_version, 1);
   assert.equal(status.latest_config_version, 2);
   assert.equal(status.latest_status, "rejected");
+
+  relayPayload = paymentConfig(2, true);
+  const retried = await pullAndActivateWalleeConfig(binding(), 2, relayPayload.checksum);
+  assert.equal(retried.enabled, true);
+  assert.equal(retried.active_config_version, 2);
+  assert.equal(retried.latest_status, "active");
+});
+
+test("HTTP 422 terminal cancellation is an expected cancelled outcome", async () => {
+  const payment = await post<PaymentResult>("/api/payments/wallee-terminal/start", {
+    request_id: "wallee-terminal-cancelled",
+    lines: [line("terminal-cancelled", 500)],
+    table_context: null
+  }, 202);
+  assert.equal(payment.lifecycle_state, "cancelled");
+  assert.equal(payment.provider_status, "CANCELLED");
+  assert.equal(payment.reconciliation_required, false);
+  assert.equal(payment.failure_reason, null);
 });
 
 test("payment remains available when relay is unavailable after bootstrap", async () => {
@@ -320,6 +345,8 @@ async function handleWalleeRequest(request: IncomingMessage, response: ServerRes
   if (!request.headers.authorization?.startsWith("Bearer ")) return json(response, 401, { error: "missing auth" });
   if (request.headers.space !== "30140") return json(response, 442, { error: "wrong space" });
   if (request.method === "GET" && url.pathname === "/api/v2.0/payment/terminals/32581002") return json(response, 200, { id: 32581002, state: "ACTIVE" });
+  if (request.method === "GET" && url.pathname === "/api/v2.0/payment/terminals/missing") return json(response, 404, { error: "not found" });
+  if (request.method === "GET" && url.pathname === "/api/v2.0/payment/terminals") return json(response, 200, { data: [{ id: 32581002, identifier: "89990002303", state: "ACTIVE" }] });
   if (request.method === "POST" && url.pathname === "/api/v2.0/payment/transactions") {
     const body = await readJson(request);
     const reference = String(body.merchantReference);
@@ -349,6 +376,7 @@ async function handleWalleeRequest(request: IncomingMessage, response: ServerRes
     performCalls.set(id, count);
     if (transactionReferences.get(id)?.includes("543") && count === 1) return json(response, 543, { error: "long poll timeout" });
     if (transactionReferences.get(id)?.includes("perform-409") && count === 1) return json(response, 409, { error: "transaction version conflict" });
+    if (transactionReferences.get(id)?.includes("terminal-cancelled")) return json(response, 422, { message: "Terminal transaction canceled." });
     return json(response, 200, { id, state: transactionStates.get(id) ?? "UNKNOWN" });
   }
   const read = url.pathname.match(/^\/api\/v2\.0\/payment\/transactions\/(\d+)$/);

@@ -197,13 +197,6 @@ async function bootstrapFromRelay(binding: StoredCloudBinding) {
     writeLocalState(bootstrapStateKey, bootstrap);
     saveLocalSiteConfigFromBootstrap(bootstrap);
     applyBootstrapOutputStations(bootstrap.output_stations);
-    await pullAndActivateWalleeConfig({
-      tenant_id: binding.tenant_id!,
-      location_id: binding.location_id!,
-      local_master_instance_id: binding.local_master_instance_id!,
-      relay_base_url: binding.relay_base_url,
-      relay_token: binding.relay_token
-    });
     writeStoredBinding({
       ...binding,
       status: "PAIRED",
@@ -211,6 +204,17 @@ async function bootstrapFromRelay(binding: StoredCloudBinding) {
       bootstrap_error: null,
       last_verified_at: now
     });
+    try {
+      await pullAndActivateWalleeConfig({
+        tenant_id: binding.tenant_id!,
+        location_id: binding.location_id!,
+        local_master_instance_id: binding.local_master_instance_id!,
+        relay_base_url: binding.relay_base_url,
+        relay_token: binding.relay_token
+      });
+    } catch (error) {
+      console.warn("Wallee configuration was rejected without invalidating LocalMaster pairing.", error);
+    }
     void pushTableLayoutToRelay(binding);
     void pushCatalogToRelay(binding);
     void pushOperationsToRelay(binding);

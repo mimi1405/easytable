@@ -13,6 +13,7 @@ import type { PaymentMethod, PaymentRequest } from "../../lib/pos-types";
 type PaymentScreenProps = {
   total: number;
   isSubmitting: boolean;
+  submittingMessage?: string;
   isWalleeTerminalEnabled: boolean;
   onCancel: () => void;
   onSelectMethod: (payment: PaymentRequest) => void;
@@ -30,6 +31,7 @@ const cashSuggestions = [
 export function PaymentScreen({
   total,
   isSubmitting,
+  submittingMessage = "Zahlung wird verarbeitet",
   isWalleeTerminalEnabled,
   onCancel,
   onSelectMethod,
@@ -56,7 +58,7 @@ export function PaymentScreen({
           <img src={logoUrl} alt="EasyTable" className="h-20 w-20 object-contain" />
         </div>
         <div className="mt-8 grid gap-2">
-          <p className="text-2xl font-black text-slate-950">Zahlung wird verarbeitet</p>
+          <p className="text-2xl font-black text-slate-950">{submittingMessage}</p>
           <p className="text-sm font-black uppercase tracking-[0.18em] text-slate-400">
             {formatChf(total)}
           </p>

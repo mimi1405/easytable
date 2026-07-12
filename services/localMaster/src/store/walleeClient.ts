@@ -13,6 +13,14 @@ export type WalleeTerminalReference = {
   terminalIdentifier: string | null;
 };
 
+export type WalleeTerminal = {
+  id: number | string;
+  identifier?: string;
+  name?: string;
+  state?: string;
+  [key: string]: unknown;
+};
+
 export type WalleeTransaction = {
   id: number | string;
   state?: string;
@@ -109,8 +117,25 @@ export class WalleeClient {
     return this.request("GET", "/payment/transactions/" + encodeURIComponent(transactionId));
   }
 
-  readTerminal(terminalId: string): Promise<Record<string, unknown>> {
+  readTerminal(terminalId: string): Promise<WalleeTerminal> {
     return this.request("GET", "/payment/terminals/" + encodeURIComponent(terminalId));
+  }
+
+  async resolveTerminal(reference: WalleeTerminalReference): Promise<WalleeTerminal> {
+    if (reference.terminalId) {
+      try {
+        const terminal = await this.readTerminal(reference.terminalId);
+        if (!reference.terminalIdentifier || !terminal.identifier || terminal.identifier === reference.terminalIdentifier) return terminal;
+      } catch (error) {
+        if (!(error instanceof WalleeApiError) || error.status !== 404 || !reference.terminalIdentifier) throw error;
+      }
+    }
+
+    const response = await this.request<WalleeTerminal[] | { data?: WalleeTerminal[] }>("GET", "/payment/terminals?limit=100");
+    const terminals = Array.isArray(response) ? response : response.data ?? [];
+    const terminal = terminals.find((candidate) => candidate.identifier === reference.terminalIdentifier);
+    if (!terminal) throw new Error("Wallee terminal identifier was not found in the configured space.");
+    return terminal;
   }
 
   fetchReceipts(transactionId: string, format: "PDF" | "TXT" = "PDF", width = 72): Promise<WalleeRenderedTerminalReceipt[]> {

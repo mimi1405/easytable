@@ -112,6 +112,18 @@ export async function startWalleeCloudTillPayment(request: PaymentProviderReques
       mapped.successful ? null : "Wallee terminal returned " + mapped.providerState + "."
     );
   } catch (error) {
+    if (isTerminalTransactionCancelled(error)) {
+      const providerState = "CANCELLED";
+      updatePaymentAttempt(attempt.id, {
+        providerTransactionId: transactionId,
+        providerState,
+        lifecycleState: "cancelled",
+        reconciliationRequired: false,
+        failureReason: null
+      });
+      recordPaymentEvent(attempt.id, "PROVIDER_TERMINAL_CANCELLED", providerState, { status: error.status });
+      return providerResult(attempt.id, transactionId, providerState, "cancelled", false, false, null);
+    }
     const message = safeError(error);
     const retryable = transactionId !== null && (!(error instanceof WalleeApiError) || error.status === 0 || error.status === 409 || error.status === 542 || error.status === 543 || error.status >= 500);
     const lifecycleState = retryable ? "reconciliation_required" : "failed";
@@ -124,6 +136,16 @@ export async function startWalleeCloudTillPayment(request: PaymentProviderReques
     recordPaymentEvent(attempt.id, "PROVIDER_ERROR", null, { error: message });
     if (retryable) ensurePaymentRecoveryJob(attempt.id, "RECONCILE");
     return providerResult(attempt.id, transactionId, "UNKNOWN", lifecycleState, false, retryable, message);
+  }
+}
+
+function isTerminalTransactionCancelled(error: unknown) {
+  if (!(error instanceof WalleeApiError) || error.status !== 422) return false;
+  try {
+    const body = JSON.parse(error.responseBody) as { message?: unknown };
+    return typeof body.message === "string" && body.message.trim().toLowerCase() === "terminal transaction canceled.";
+  } catch {
+    return false;
   }
 }
 

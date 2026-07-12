@@ -44,6 +44,8 @@ const {
   salesLedgerEntries: salesLedgerEntriesTable
 } = await import("../db/schema.js");
 const { pollRelayCommands } = await import("../relayCommandWorker.js");
+const { getCloudBinding, retryCloudBootstrap } = await import("../cloudBinding.js");
+const { loadLocalSiteConfig } = await import("../store/localSiteStore.js");
 const { eq } = await import("drizzle-orm");
 const {
   payments,
@@ -820,6 +822,33 @@ test("relay command polling tolerates unreachable relay", async () => {
   try {
     await pollRelayCommands();
     await pollRelayCommands();
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
+test("rejected Wallee config does not invalidate successful core bootstrap", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const site = loadLocalSiteConfig();
+  const now = Date.now();
+  writeCloudBindingForTest({ localMasterInstanceId: "lm_wallee_optional", now, relayBaseUrl: "http://relay-bootstrap.test", relayToken: "relay_token_wallee_optional" });
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/local-masters/bootstrap")) return jsonResponse({
+      tenant: { id: site.tenant.id, name: site.tenant.name, slug: "test", email: null, phone: null, website: null, status: "ACTIVE", created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString() },
+      location: { id: site.location.id, tenant_id: site.tenant.id, name: site.location.name, slug: "test", address: null, local_master_instance_id: "lm_wallee_optional", service_mode: site.service_mode, status: "ACTIVE", created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString() },
+      service_mode: site.service_mode, output_stations: [], users: [], bootstrapped_at: new Date(now).toISOString(),
+    });
+    if (url.endsWith("/api/local-masters/payment-config")) return jsonResponse({ error: "invalid Wallee config" }, 500);
+    return jsonResponse({ ok: true });
+  };
+  console.warn = () => undefined;
+  try {
+    await retryCloudBootstrap();
+    assert.equal(getCloudBinding().status, "PAIRED");
+    assert.equal(getCloudBinding().bootstrap_error, null);
   } finally {
     globalThis.fetch = originalFetch;
     console.warn = originalWarn;

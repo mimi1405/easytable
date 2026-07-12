@@ -49,9 +49,9 @@
     - Preserve LocalMaster as the operational source of truth. Remote writes are successful only after the bound LocalMaster accepts the idempotent command; cloud order/payment data remains a sync/reporting read model.
 
 
-- [ ] Analytics owner module in staff
+- [x] Analytics owner module in staff
     - When hovering over the diagrams they show for example "700" instead of 7.00CHF because it uses raw Rappen number instead
 
-- [ ] Variant for products adding / editing is completely missing
+- [x] Variant for products adding / editing is completely missing
     - add in owner staff module for catalog and products ability to give variantgroups with items to products / categories
     - products take from parent category if assigned, if set on product only product has it

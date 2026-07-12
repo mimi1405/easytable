@@ -452,7 +452,11 @@ type StaffRuntimeContext = {
 };
 
 const configuredUrl = import.meta.env.VITE_LOCAL_REALTIME_URL as string | undefined;
-const configuredRelayUrl = import.meta.env.VITE_RELAY_SYNC_URL as string | undefined;
+const configuredRelayUrl = (
+  import.meta.env.VITE_RELAY_SYNC_URL as string | undefined
+) ?? (
+  import.meta.env.VITE_RELAY_SYNC_API_URL as string | undefined
+);
 let activeTenantId: string | null = null;
 let activeLocationId: string | null = null;
 let expectedLocalMasterInstanceId: string | null = null;
@@ -477,7 +481,11 @@ export function getLocalMasterUrl() {
 }
 
 export function getRelaySyncUrl() {
-  return configuredRelayUrl?.replace(/\/$/, "") ?? "";
+  if (configuredRelayUrl) {
+    return configuredRelayUrl.replace(/\/$/, "");
+  }
+
+  return isLoopbackHostname(window.location.hostname) ? "http://localhost:3100" : "";
 }
 
 export function getAccountSetupRelaySyncUrl() {
@@ -486,12 +494,14 @@ export function getAccountSetupRelaySyncUrl() {
 
 export async function detectConnectionMode(): Promise<ConnectionMode> {
   const localRuntime = await loadRuntimeContext();
-  if ((localRuntime || configuredUrl) && await canReachExpectedLocalMaster()) {
+  const mayUseLocalMaster = Boolean(localRuntime || configuredUrl || isLoopbackHostname(window.location.hostname));
+  if (mayUseLocalMaster && await canReachExpectedLocalMaster()) {
     return "LOCAL";
   }
 
   return getRelaySyncUrl() && activeLocationId ? "RELAY" : "OFFLINE";
 }
+
 
 export async function canReachLocalMaster() {
   return (await readLocalMasterIdentity()) !== null;
@@ -1482,3 +1492,4 @@ async function parseJsonResponse<T>(response: Response, fallback: T): Promise<T>
 
   return (payload as T) ?? fallback;
 }
+import { isLoopbackHostname } from "./connection-discovery";

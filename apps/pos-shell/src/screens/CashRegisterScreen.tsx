@@ -87,6 +87,7 @@ export function CashRegisterScreen({
   const showTopRegion = true;
   const isCounterService = serviceMode === "COUNTER_SERVICE";
   const [products, setProducts] = useState<PosProduct[]>([]);
+  const [paymentLoaderMessage, setPaymentLoaderMessage] = useState("Zahlung wird verarbeitet");
   const [selectedCategory, setSelectedCategory] = useState(allCategoryLabel);
   const [catalogViewMode, setCatalogViewMode] =
     useState<CatalogViewMode>("grid");
@@ -483,6 +484,7 @@ export function CashRegisterScreen({
     }
 
     setIsCompletingPayment(true);
+    setPaymentLoaderMessage("Zahlung wird verarbeitet");
 
     try {
       const requestId = createClientRequestId("payment");
@@ -526,8 +528,9 @@ export function CashRegisterScreen({
         if (payment.lifecycle_state === "cancelled") {
           clearPendingWalleeAttempt();
           setPendingPaymentAttemptId(null);
+          setPaymentLoaderMessage("Transaktion abgelehnt");
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
           setIsPaymentScreenOpen(false);
-          toast.info("Terminalzahlung wurde abgebrochen.");
           return;
         }
         throw new Error(payment.failure_reason ?? "Zahlung wurde nicht abgeschlossen.");
@@ -556,6 +559,7 @@ export function CashRegisterScreen({
       <PaymentScreen
         total={basketTotal}
         isSubmitting={isCompletingPayment}
+        submittingMessage={paymentLoaderMessage}
         isWalleeTerminalEnabled={isWalleeTerminalEnabled}
         onCancel={() => setIsPaymentScreenOpen(false)}
         onSelectMethod={(payment) => void handleCompletePayment(payment)}

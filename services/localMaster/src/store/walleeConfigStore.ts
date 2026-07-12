@@ -71,7 +71,7 @@ export async function pullAndActivateWalleeConfig(
   }
 
   const latest = getLatestWalleeConfigRow();
-  if (latest && payload.config_version <= latest.configVersion) {
+  if (latest && (payload.config_version < latest.configVersion || (payload.config_version === latest.configVersion && latest.status !== "rejected"))) {
     return getWalleeConfigStatus();
   }
 
@@ -82,11 +82,12 @@ export async function pullAndActivateWalleeConfig(
 
   const encryptedKey = encryptSecret(payload.wallee.authentication_key);
   const now = Date.now();
-  const configId = "local_wallee_" + randomUUID();
+  const retryRejected = latest?.configVersion === payload.config_version && latest.status === "rejected";
+  const configId = retryRejected ? latest.id : "local_wallee_" + randomUUID();
   const db = getDrizzleDatabase();
 
   db.transaction((tx) => {
-    tx.insert(localWalleeConfig).values({
+    const configValues = {
       id: configId,
       tenantId: payload.tenant_id,
       locationId: payload.location_id,
@@ -104,7 +105,13 @@ export async function pullAndActivateWalleeConfig(
       activatedAt: null,
       createdAt: now,
       updatedAt: now
-    }).run();
+    };
+    if (retryRejected) {
+      tx.delete(localWalleeTerminals).where(eq(localWalleeTerminals.configId, configId)).run();
+      tx.update(localWalleeConfig).set({ ...configValues, id: undefined, createdAt: latest.createdAt }).where(eq(localWalleeConfig.id, configId)).run();
+    } else {
+      tx.insert(localWalleeConfig).values(configValues).run();
+    }
     for (const terminal of payload.wallee!.terminals) {
       tx.insert(localWalleeTerminals).values({
         id: "local_wallee_terminal_" + randomUUID(),
@@ -220,7 +227,11 @@ async function validatePendingConfig(configId: string, authenticationKey: string
   const client = new WalleeClient({ spaceId: config.spaceId, applicationUserId: config.applicationUserId, authenticationKey });
   for (const terminal of terminals) {
     if (!terminal.terminalId && !terminal.terminalIdentifier) throw new Error("Wallee terminal id or identifier is required.");
-    if (terminal.terminalId) await client.readTerminal(terminal.terminalId);
+    const resolved = await client.resolveTerminal({ terminalId: terminal.terminalId, terminalIdentifier: terminal.terminalIdentifier });
+    const resolvedId = String(resolved.id);
+    if (terminal.terminalId !== resolvedId) {
+      getDrizzleDatabase().update(localWalleeTerminals).set({ terminalId: resolvedId, updatedAt: Date.now() }).where(eq(localWalleeTerminals.id, terminal.id)).run();
+    }
   }
 }
 

@@ -5,7 +5,6 @@ import { toast } from "sonner";
 
 import { AppLayout } from "./layout/AppLayout";
 import { defaultView, type AppView, type StaffModule } from "./layout/navigation";
-import { resolveTenantRelation } from "./lib/authTenant";
 import { detectConnectionMode, loadPosSettings, type LocationServiceMode } from "./lib/local-master";
 import {
   listSelectableStaffContexts,
@@ -14,7 +13,7 @@ import {
   type ActiveStaffContext,
   type StaffAuthContext,
 } from "./lib/auth-context";
-import { detectConnectionMode, loadPosSettings, setActiveStaffConnectionContext, type LocationServiceMode } from "./lib/local-master";
+import { setActiveStaffConnectionContext } from "./lib/local-master";
 import { AccountSetupPage } from "./modules/account-setup/AccountSetupPage";
 import { KdsPage } from "./modules/kds/KdsPage";
 import { OwnerAnalyticsPage } from "./modules/owner/analytics/OwnerAnalyticsPage";
