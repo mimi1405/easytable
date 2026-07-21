@@ -1,5 +1,5 @@
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { getDrizzleDatabase } from "./db/client.js";
 import { localState, pairedTerminals } from "./db/schema.js";
@@ -23,7 +23,7 @@ type LocalSession = {
 };
 
 export function loginWithLocalPin(request: { device_id: string; device_secret: string; user_id: string; pin: string }) {
-  const device = requireStaffDevice(request.device_id, request.device_secret);
+  const device = requireSalesDevice(request.device_id, request.device_secret);
   assertAttemptAllowed(device.id, request.user_id);
 
   const user = loadBootstrapUsers().find((candidate) => candidate.user_id === request.user_id);
@@ -62,12 +62,17 @@ export function listLocalLoginUsers() {
 }
 
 export function requireStaffDevice(deviceId?: string, deviceSecret?: string) {
-  const device = deviceId ? getDrizzleDatabase().select().from(pairedTerminals).where(and(
-    eq(pairedTerminals.id, deviceId),
-    eq(pairedTerminals.role, "STAFF_DEVICE"),
-  )).get() : null;
-  if (!device || !deviceSecret || !safeEqual(device.secret, deviceSecret)) throw unauthorized("Staff device is not authorized.");
-  if (Date.now() - device.pairedAt > deviceValidityMs) throw unauthorized("Staff device authorization must be renewed online.");
+  const device = requireSalesDevice(deviceId, deviceSecret);
+  if (device.role !== "STAFF_DEVICE") throw unauthorized("Staff device is not authorized.");
+  return device;
+}
+
+export function requireSalesDevice(deviceId?: string, deviceSecret?: string) {
+  const device = deviceId ? getDrizzleDatabase().select().from(pairedTerminals).where(eq(pairedTerminals.id, deviceId)).get() : null;
+  if (!device || !["STAFF_DEVICE", "POS_TERMINAL", "MASTER_POS"].includes(device.role) || !deviceSecret || !safeEqual(device.secret, deviceSecret)) {
+    throw unauthorized("Sales device is not authorized.");
+  }
+  if (Date.now() - device.pairedAt > deviceValidityMs) throw unauthorized("Sales device authorization must be renewed online.");
   return device;
 }
 

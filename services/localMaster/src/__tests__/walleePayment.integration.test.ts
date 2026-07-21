@@ -39,6 +39,7 @@ const { getDrizzleDatabase } = await import("../db/client.js");
 const { localWalleeConfig, orderSnapshots, paymentAttempts, paymentReceipts, paymentRecoveryJobs, salesLedgerEntries } = await import("../db/schema.js");
 const { pullAndActivateWalleeConfig, getWalleeConfigStatus } = await import("../store/walleeConfigStore.js");
 const { WalleeClient } = await import("../store/walleeClient.js");
+const { startWalleeTerminalPayment } = await import("../store/orderStore.js");
 const { getLocalMasterIdentity } = await import("../pairing.js");
 const { eq } = await import("drizzle-orm");
 const app = await buildServer({ logger: false });
@@ -263,6 +264,35 @@ test("invalid new terminal config preserves the last active version", async () =
   assert.equal(retried.latest_status, "active");
 });
 
+test("partially complimentary Wallee payment charges only paid units and records offered value", async () => {
+  const offeredLine = {
+    ...line("wallee-partial-complimentary", 500),
+    quantity: 2,
+    complimentary_quantity: 1,
+    complimentary_value: 500,
+    line_total: 500
+  };
+  const command = await startWalleeTerminalPayment({
+    request_id: "wallee-partial-complimentary",
+    lines: [offeredLine],
+    table_context: null,
+    actor: {
+      user_id: "user_wallee_offer",
+      display_name: "Wallee Offer Test",
+      role: "STAFF",
+      device_id: "pos_wallee_offer",
+      terminal_id: null
+    }
+  });
+  const payment = command.payment;
+  const ledger = getDrizzleDatabase().select().from(salesLedgerEntries).where(eq(salesLedgerEntries.orderId, payment.order_id)).all();
+
+  assert.equal(payment.amount, 500);
+  assert.deepEqual(ledger.map((entry) => entry.entryType).sort(), ["COMPLIMENTARY_RECORDED", "PAYMENT_RECORDED", "SALE_COMPLETED"]);
+  assert.equal(ledger.find((entry) => entry.entryType === "SALE_COMPLETED")?.quantity, 1);
+  assert.equal(ledger.find((entry) => entry.entryType === "COMPLIMENTARY_RECORDED")?.complimentaryValue, 500);
+});
+
 test("HTTP 422 terminal cancellation is an expected cancelled outcome", async () => {
   const payment = await post<PaymentResult>("/api/payments/wallee-terminal/start", {
     request_id: "wallee-terminal-cancelled",
@@ -402,7 +432,7 @@ function cashRequest(requestId: string, amount: number) {
 
 function line(id: string, amount: number): BasketLine {
   return { id, product_id: "prod-" + id, product_type: "BASIC", product_name: id, product_category: "Tests", base_price: amount,
-    tax_code_id: "vat_81", tax_code_name: "VAT 8.1%", tax_rate_bps: 810, station: "Bar", variants: [], unit_total: amount, quantity: 1, line_total: amount };
+    tax_code_id: "vat_81", tax_code_name: "VAT 8.1%", tax_rate_bps: 810, station: "Bar", variants: [], unit_total: amount, quantity: 1, complimentary_quantity: 0, complimentary_value: 0, line_total: amount };
 }
 
 async function post<T>(url: string, request: unknown, expected: number) {

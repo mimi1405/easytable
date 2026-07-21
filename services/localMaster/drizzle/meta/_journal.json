@@ -43,6 +43,13 @@
       "when": 1783704000000,
       "tag": "0005_remove_default_catalog_data",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784649600000,
+      "tag": "0006_complimentary_items",
+      "breakpoints": true
     }
   ]
 }

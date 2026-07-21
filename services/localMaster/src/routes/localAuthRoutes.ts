@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { listLocalLoginUsers, loginWithLocalPin, requireLocalSession, requireStaffDevice } from "../localAuth.js";
+import { listLocalLoginUsers, loginWithLocalPin, requireLocalSession, requireSalesDevice } from "../localAuth.js";
 import { pairTerminal } from "../pairing.js";
 
 export async function registerLocalAuthRoutes(app: FastifyInstance) {
   app.get("/api/local-auth/users", async (request) => {
-    requireStaffDevice(request.headers["x-easytable-device-id"] as string | undefined, request.headers["x-easytable-device-secret"] as string | undefined);
+    requireSalesDevice(request.headers["x-easytable-device-id"] as string | undefined, request.headers["x-easytable-device-secret"] as string | undefined);
     return listLocalLoginUsers();
   });
   app.post<{ Body: { request: { code: string; device_name: string; local_master_url: string; device_fingerprint?: string } } }>(

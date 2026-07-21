@@ -139,7 +139,7 @@ export async function startWalleeCloudTillPayment(request: PaymentProviderReques
   }
 }
 
-function isTerminalTransactionCancelled(error: unknown) {
+function isTerminalTransactionCancelled(error: unknown): error is WalleeApiError {
   if (!(error instanceof WalleeApiError) || error.status !== 422) return false;
   try {
     const body = JSON.parse(error.responseBody) as { message?: unknown };

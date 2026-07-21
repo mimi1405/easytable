@@ -58,6 +58,8 @@ const {
   staffOrders
 } = await import("../store/storeState.js");
 const { readState } = await import("../statePersistence.js");
+const { adjustComplimentaryQuantity, completeCashPayment, completeComplimentaryOrder, createOrderSnapshot } = await import("../store/orderStore.js");
+const { listKdsTickets } = await import("../store/kdsStore.js");
 
 const app = await buildServer({ logger: false });
 
@@ -614,6 +616,106 @@ test("day close request_id replay returns the same saved close", async () => {
   const second = await postJson<SavedDayClose>("/api/day-close", request, 201);
 
   assert.deepEqual(second, first);
+});
+
+test("complimentary completion is idempotent and records value without a payment", () => {
+  const beforePayments = payments.length;
+  const line = {
+    ...basketLine("complimentary-free", 900, 2),
+    complimentary_quantity: 2,
+    complimentary_value: 1800,
+    line_total: 0
+  };
+  const request = {
+    request_id: "complimentary_complete_replay",
+    lines: [line],
+    table_context: null,
+    terminal_id: "terminal_comp",
+    actor: {
+      user_id: "user_comp",
+      display_name: "Service Test",
+      role: "STAFF",
+      device_id: "pos_comp",
+      terminal_id: "terminal_comp"
+    }
+  };
+
+  const first = completeComplimentaryOrder(request);
+  const replay = completeComplimentaryOrder(request);
+  const entries = salesLedgerEntries.filter((entry) => entry.order_id === first.result.order_id);
+
+  assert.equal(replay.result.order_id, first.result.order_id);
+  assert.equal(payments.length, beforePayments);
+  assert.equal(first.result.total, 0);
+  assert.equal(first.result.complimentary_value, 1800);
+  assert.equal(entries.filter((entry) => entry.entry_type === "COMPLIMENTARY_RECORDED").length, 1);
+  assert.equal(entries.find((entry) => entry.entry_type === "COMPLIMENTARY_RECORDED")?.actor_user_id, "user_comp");
+  assert.equal(entries.some((entry) => entry.entry_type === "PAYMENT_RECORDED"), false);
+});
+
+test("partially complimentary cash payment charges only paid units", () => {
+  const offeredLine = {
+    ...basketLine("cash-partial-complimentary", 600, 2),
+    complimentary_quantity: 1,
+    complimentary_value: 600,
+    line_total: 600
+  };
+  const command = completeCashPayment({
+    request_id: "cash-partial-complimentary",
+    lines: [offeredLine],
+    table_context: null,
+    payment_method: "CASH",
+    received_cash: 600,
+    change_given: 0,
+    actor: {
+      user_id: "user_cash_offer",
+      display_name: "Cash Offer Test",
+      role: "STAFF",
+      device_id: "pos_cash_offer",
+      terminal_id: null
+    }
+  });
+  const entries = salesLedgerEntries.filter((entry) => entry.order_id === command.payment.order_id);
+
+  assert.equal(command.payment.amount, 600);
+  assert.equal(entries.find((entry) => entry.entry_type === "SALE_COMPLETED")?.quantity, 1);
+  assert.equal(entries.find((entry) => entry.entry_type === "COMPLIMENTARY_RECORDED")?.complimentary_value, 600);
+  assert.equal(entries.find((entry) => entry.entry_type === "PAYMENT_RECORDED")?.gross_amount, 600);
+});
+
+test("complimentary adjustment is idempotent and never changes produced KDS quantity", () => {
+  const line = basketLine("complimentary-adjust", 500, 3);
+  const created = createOrderSnapshot({
+    request_id: "complimentary_adjust_order",
+    lines: [line],
+    table_context: tableContext("table_basilica_fumoir_3", "3")
+  });
+  const actor = {
+    user_id: "user_adjust",
+    display_name: "Adjust Test",
+    role: "STAFF",
+    device_id: "pos_adjust",
+    terminal_id: null
+  };
+  const beforeKdsState = structuredClone(listKdsTickets());
+  const request = {
+    request_id: "complimentary_adjust_replay",
+    order_id: created.order.id,
+    line_id: line.id,
+    complimentary_quantity: 1,
+    actor
+  };
+
+  const first = adjustComplimentaryQuantity(request);
+  const replay = adjustComplimentaryQuantity(request);
+  const adjustedLine = first.lines[0];
+  const afterKdsState = listKdsTickets();
+
+  assert.equal(adjustedLine?.complimentary_quantity, 1);
+  assert.equal(adjustedLine?.quantity, 3);
+  assert.equal(adjustedLine?.line_total, 1000);
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(afterKdsState, beforeKdsState);
 });
 
 test("day close rejects a business-day window without completed orders", async () => {
@@ -1456,6 +1558,8 @@ function basketLine(id: string, amount: number, quantity = 1): BasketLine {
     variants: [],
     unit_total: amount,
     quantity,
+    complimentary_quantity: 0,
+    complimentary_value: 0,
     line_total: amount * quantity
   };
 }

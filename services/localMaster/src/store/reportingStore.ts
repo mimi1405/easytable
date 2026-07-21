@@ -44,6 +44,7 @@ type PosOrderForSnapshot = {
   subtotal: number;
   tax_total: number;
   total: number;
+  actor?: FinalOrderSnapshot["actor"];
 };
 
 type BusinessWindow = {
@@ -73,6 +74,7 @@ export function recordCompletedSaleSnapshot(
     subtotal: order.subtotal,
     tax_total: order.tax_total,
     total: order.total,
+    actor: order.actor ?? null,
     payment: {
       payment_id: completedPayment.payment_id,
       request_id: completedPayment.request_id,
@@ -103,6 +105,57 @@ export function recordCompletedSaleSnapshot(
     ledger_entries: listSalesLedgerEntries().filter((entry) => entry.order_id === snapshot.order_id)
   });
 
+  return snapshot;
+}
+
+export function recordComplimentarySaleSnapshot(
+  order: PosOrderForSnapshot,
+  requestId: string,
+  terminalId: string | null
+): FinalOrderSnapshot {
+  const existing = getSnapshotByOrderId(order.id);
+  if (existing) return existing;
+
+  const completedAt = Date.now();
+  const snapshot: FinalOrderSnapshot = {
+    id: "snap_" + order.id,
+    order_id: order.id,
+    order_number: order.order_number,
+    snapshot_type: "COMPLIMENTARY",
+    table_context: order.table_context,
+    lines: cloneLines(order.lines),
+    subtotal: 0,
+    tax_total: 0,
+    total: 0,
+    payment: {
+      payment_id: "complimentary_" + order.id,
+      request_id: requestId,
+      method: "COMPLIMENTARY",
+      amount: 0,
+      terminal_id: terminalId,
+      provider: "LOCAL",
+      provider_transaction_id: null,
+      provider_status: "NOT_REQUIRED",
+      lifecycle_state: "completed",
+      paid_at: completedAt
+    },
+    actor: order.actor ?? null,
+    terminal_id: terminalId,
+    business_date: businessDateForTimestamp(completedAt),
+    created_at: completedAt
+  };
+
+  insertOrderSnapshot(snapshot);
+  orderSnapshots.push(snapshot);
+  appendSaleLedgerEntries(snapshot);
+  persistOrderSnapshots();
+  persistSalesLedgerEntries();
+  appendOutboxEvent("ORDER_SNAPSHOT_RECORDED", snapshot.order_id, snapshot);
+  appendOutboxEvent("SALES_LEDGER_UPDATED", snapshot.order_id, {
+    order_id: snapshot.order_id,
+    entry_types: ["COMPLIMENTARY_RECORDED"],
+    ledger_entries: listSalesLedgerEntries().filter((entry) => entry.order_id === snapshot.order_id)
+  });
   return snapshot;
 }
 
@@ -285,7 +338,8 @@ function createOrderStornoUnchecked(orderId: string, request: CreateOrderStornoR
 function appendSaleLedgerEntries(snapshot: FinalOrderSnapshot) {
   const entries: SalesLedgerEntry[] = [];
   for (const line of snapshot.lines) {
-    entries.push({
+    const chargedQuantity = line.quantity - line.complimentary_quantity;
+    if (chargedQuantity > 0) entries.push({
       id: "ledger_sale_" + snapshot.order_id + "_" + line.id,
       request_id: snapshot.payment.request_id,
       entry_type: "SALE_COMPLETED",
@@ -297,15 +351,48 @@ function appendSaleLedgerEntries(snapshot: FinalOrderSnapshot) {
       product_id: line.product_id,
       product_name: line.product_name,
       product_category: line.product_category,
-      quantity: line.quantity,
+      tax_code_id: line.tax_code_id,
+      tax_rate_bps: line.tax_rate_bps,
+      quantity: chargedQuantity,
       gross_amount: line.line_total,
       tax_amount: calculateIncludedTax(line.line_total, line.tax_rate_bps),
+      complimentary_value: 0,
+      ...actorLedgerFields(snapshot),
       payment_method: snapshot.payment.method,
       terminal_id: snapshot.terminal_id,
       provider: snapshot.payment.provider,
       provider_transaction_id: snapshot.payment.provider_transaction_id,
       provider_refund_id: null,
       provider_status: snapshot.payment.provider_status,
+      reason: null,
+      business_date: snapshot.business_date,
+      occurred_at: snapshot.created_at
+    });
+    if (line.complimentary_quantity > 0) entries.push({
+      id: "ledger_complimentary_" + snapshot.order_id + "_" + line.id,
+      request_id: snapshot.payment.request_id,
+      entry_type: "COMPLIMENTARY_RECORDED",
+      order_id: snapshot.order_id,
+      order_number: snapshot.order_number,
+      payment_id: snapshot.snapshot_type === "PAID" ? snapshot.payment.payment_id : null,
+      original_entry_id: null,
+      line_id: line.id,
+      product_id: line.product_id,
+      product_name: line.product_name,
+      product_category: line.product_category,
+      tax_code_id: line.tax_code_id,
+      tax_rate_bps: line.tax_rate_bps,
+      quantity: line.complimentary_quantity,
+      gross_amount: 0,
+      tax_amount: 0,
+      complimentary_value: line.complimentary_value,
+      ...actorLedgerFields(snapshot),
+      payment_method: snapshot.snapshot_type === "PAID" ? snapshot.payment.method : null,
+      terminal_id: snapshot.terminal_id,
+      provider: null,
+      provider_transaction_id: null,
+      provider_refund_id: null,
+      provider_status: null,
       reason: null,
       business_date: snapshot.business_date,
       occurred_at: snapshot.created_at
@@ -328,9 +415,13 @@ function appendPaymentLedgerEntry(snapshot: FinalOrderSnapshot, payment: LocalPa
     product_id: null,
     product_name: null,
     product_category: null,
+    tax_code_id: null,
+    tax_rate_bps: 0,
     quantity: 0,
     gross_amount: snapshot.payment.amount,
     tax_amount: 0,
+    complimentary_value: 0,
+    ...actorLedgerFields(snapshot),
     payment_method: snapshot.payment.method,
     terminal_id: snapshot.terminal_id,
     provider: snapshot.payment.provider,
@@ -374,9 +465,13 @@ function toStornoSaleEntry(input: {
     product_id: input.line.product_id,
     product_name: input.line.product_name,
     product_category: input.line.product_category,
+    tax_code_id: input.line.tax_code_id,
+    tax_rate_bps: input.line.tax_rate_bps,
     quantity: -input.quantity,
     gross_amount: -lineGross,
     tax_amount: -calculateIncludedTax(lineGross, input.line.tax_rate_bps),
+    complimentary_value: 0,
+    ...actorLedgerFields(input.snapshot),
     payment_method: input.snapshot.payment.method,
     terminal_id: input.terminalId,
     provider: input.provider,
@@ -413,9 +508,13 @@ function toRefundLedgerEntry(input: {
     product_id: null,
     product_name: null,
     product_category: null,
+    tax_code_id: null,
+    tax_rate_bps: 0,
     quantity: 0,
     gross_amount: input.amount,
     tax_amount: 0,
+    complimentary_value: 0,
+    ...actorLedgerFields(input.snapshot),
     payment_method: input.snapshot.payment.method,
     terminal_id: input.terminalId,
     provider: input.provider,
@@ -436,8 +535,10 @@ function buildSalesReport(window: BusinessWindow): SalesReport {
       isReportingEntry(entry.entry_type)
   );
   const saleEntries = entries.filter((entry) => isSaleCorrectionEntry(entry.entry_type));
+  const complimentaryEntries = entries.filter((entry) => entry.entry_type === "COMPLIMENTARY_RECORDED");
   const paymentEntries = entries.filter((entry) => entry.entry_type === "PAYMENT_RECORDED" || entry.entry_type === "REFUND_RECORDED");
   const productSales = buildProductSales(saleEntries);
+  const complimentarySales = buildComplimentarySales(complimentaryEntries);
 
   return {
     business_date: window.businessDate,
@@ -445,13 +546,16 @@ function buildSalesReport(window: BusinessWindow): SalesReport {
     window_end_ms: window.endMs,
     gross_total: sum(saleEntries, "gross_amount"),
     tax_total: sum(saleEntries, "tax_amount"),
-    order_count: new Set(saleEntries.filter((entry) => entry.entry_type === "SALE_COMPLETED").map((entry) => entry.order_id)).size,
+    order_count: new Set([...saleEntries, ...complimentaryEntries].map((entry) => entry.order_id)).size,
     item_count: sum(saleEntries, "quantity"),
+    complimentary_quantity: sum(complimentaryEntries, "quantity"),
+    complimentary_value: sum(complimentaryEntries, "complimentary_value"),
     payment_totals: {
       cash: sum(paymentEntries.filter((entry) => entry.payment_method === "CASH"), "gross_amount"),
       wallee_terminal: sum(paymentEntries.filter((entry) => entry.payment_method === "WALLEE_TERMINAL"), "gross_amount")
     },
     product_sales: productSales,
+    complimentary_sales: complimentarySales,
     entries
   };
 }
@@ -486,6 +590,10 @@ function buildProductSales(entries: SalesLedgerEntry[]) {
   return Array.from(byProduct.values()).sort(
     (left, right) => right.total - left.total || left.product_name.localeCompare(right.product_name)
   );
+}
+
+function buildComplimentarySales(entries: SalesLedgerEntry[]) {
+  return buildProductSales(entries.map((entry) => ({ ...entry, gross_amount: entry.complimentary_value })));
 }
 
 function requestedPartialQuantities(snapshot: FinalOrderSnapshot, lines: Array<{ line_id: string; quantity: number }>) {
@@ -572,6 +680,7 @@ function defaultStornoProviderStatus(snapshot: FinalOrderSnapshot) {
 
 function isReportingEntry(entryType: SalesLedgerEntryType) {
   return entryType === "SALE_COMPLETED" ||
+    entryType === "COMPLIMENTARY_RECORDED" ||
     entryType === "PAYMENT_RECORDED" ||
     entryType === "ORDER_VOIDED" ||
     entryType === "ORDER_PARTIALLY_VOIDED" ||
@@ -655,6 +764,15 @@ function cloneLines(lines: BasketLine[]): BasketLine[] {
   }));
 }
 
+function actorLedgerFields(snapshot: FinalOrderSnapshot) {
+  return {
+    actor_user_id: snapshot.actor?.user_id ?? null,
+    actor_display_name: snapshot.actor?.display_name ?? null,
+    actor_role: snapshot.actor?.role ?? null,
+    actor_device_id: snapshot.actor?.device_id ?? null
+  };
+}
+
 function getSnapshotByOrderId(orderId: string): FinalOrderSnapshot | null {
   const row = getDrizzleDatabase()
     .select()
@@ -695,6 +813,8 @@ function linesForSnapshot(snapshotId: string): BasketLine[] {
       variants: parseJsonArray<BasketLine["variants"][number]>(row.variantsJson),
       unit_total: row.unitTotal,
       quantity: row.quantity,
+      complimentary_quantity: row.complimentaryQuantity,
+      complimentary_value: row.complimentaryValue,
       line_total: row.lineTotal
     }));
 }
@@ -704,12 +824,13 @@ function snapshotFromRow(row: typeof orderSnapshotsTable.$inferSelect, lines: Ba
     id: row.id,
     order_id: row.orderId,
     order_number: row.orderNumber,
-    snapshot_type: "PAID",
+    snapshot_type: row.snapshotType as FinalOrderSnapshot["snapshot_type"],
     table_context: row.tableContextJson ? parseJson(row.tableContextJson) as FinalOrderSnapshot["table_context"] : null,
     lines,
     subtotal: row.subtotal,
     tax_total: row.taxTotal,
     total: row.total,
+    actor: row.actorJson ? parseJson(row.actorJson) as FinalOrderSnapshot["actor"] : null,
     payment: {
       payment_id: row.paymentId,
       request_id: row.paymentRequestId,
@@ -737,6 +858,7 @@ function insertOrderSnapshot(snapshot: FinalOrderSnapshot) {
         orderNumber: snapshot.order_number,
         snapshotType: snapshot.snapshot_type,
         tableContextJson: snapshot.table_context ? JSON.stringify(snapshot.table_context) : null,
+        actorJson: snapshot.actor ? JSON.stringify(snapshot.actor) : null,
         subtotal: snapshot.subtotal,
         taxTotal: snapshot.tax_total,
         total: snapshot.total,
@@ -776,6 +898,8 @@ function insertOrderSnapshot(snapshot: FinalOrderSnapshot) {
           variantsJson: JSON.stringify(line.variants),
           unitTotal: line.unit_total,
           quantity: line.quantity,
+          complimentaryQuantity: line.complimentary_quantity,
+          complimentaryValue: line.complimentary_value,
           lineTotal: line.line_total,
           createdAt: snapshot.created_at
         })
@@ -803,9 +927,16 @@ function listSalesLedgerEntries(): SalesLedgerEntry[] {
       product_id: row.productId,
       product_name: row.productName,
       product_category: row.productCategory,
+      tax_code_id: row.taxCodeId,
+      tax_rate_bps: row.taxRateBps,
       quantity: row.quantity,
       gross_amount: row.grossAmount,
       tax_amount: row.taxAmount,
+      complimentary_value: row.complimentaryValue,
+      actor_user_id: row.actorUserId,
+      actor_display_name: row.actorDisplayName,
+      actor_role: row.actorRole,
+      actor_device_id: row.actorDeviceId,
       payment_method: row.paymentMethod,
       terminal_id: row.terminalId,
       provider: row.provider,
@@ -834,9 +965,16 @@ function insertSalesLedgerEntries(entries: SalesLedgerEntry[]) {
         productId: entry.product_id,
         productName: entry.product_name,
         productCategory: entry.product_category,
+        taxCodeId: entry.tax_code_id,
+        taxRateBps: entry.tax_rate_bps,
         quantity: entry.quantity,
         grossAmount: entry.gross_amount,
         taxAmount: entry.tax_amount,
+        complimentaryValue: entry.complimentary_value,
+        actorUserId: entry.actor_user_id,
+        actorDisplayName: entry.actor_display_name,
+        actorRole: entry.actor_role,
+        actorDeviceId: entry.actor_device_id,
         paymentMethod: entry.payment_method,
         terminalId: entry.terminal_id,
         provider: entry.provider,
@@ -889,9 +1027,16 @@ export function __seedLedgerEntryForTest(entry: Partial<SalesLedgerEntry>) {
     product_id: entry.product_id ?? null,
     product_name: entry.product_name ?? null,
     product_category: entry.product_category ?? null,
+    tax_code_id: entry.tax_code_id ?? null,
+    tax_rate_bps: entry.tax_rate_bps ?? 0,
     quantity: entry.quantity ?? 0,
     gross_amount: entry.gross_amount ?? 0,
     tax_amount: entry.tax_amount ?? 0,
+    complimentary_value: entry.complimentary_value ?? 0,
+    actor_user_id: entry.actor_user_id ?? null,
+    actor_display_name: entry.actor_display_name ?? null,
+    actor_role: entry.actor_role ?? null,
+    actor_device_id: entry.actor_device_id ?? null,
     payment_method: entry.payment_method ?? null,
     terminal_id: entry.terminal_id ?? null,
     provider: entry.provider ?? null,

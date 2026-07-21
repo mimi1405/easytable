@@ -5,7 +5,9 @@ export type {
 } from "./store/orderStore.js";
 
 export {
+  adjustComplimentaryQuantity,
   completeCashPayment,
+  completeComplimentaryOrder,
   createOrder,
   createOrderSnapshot,
   getOpenTableOrderBasket,

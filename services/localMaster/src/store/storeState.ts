@@ -12,7 +12,8 @@ import type {
   SavedDayClose,
   StationDeviceBinding,
   StationPickup,
-  TableContext
+  TableContext,
+  OrderActor
 } from "../types.js";
 
 export type PaymentLifecycleState =
@@ -75,13 +76,14 @@ export type FinalOrderSnapshot = {
   id: string;
   order_id: string;
   order_number: string;
-  snapshot_type: "PAID";
+  snapshot_type: "PAID" | "COMPLIMENTARY";
   table_context: TableContext | null;
   lines: BasketLine[];
   subtotal: number;
   tax_total: number;
   total: number;
   payment: OrderSnapshotPayment;
+  actor: OrderActor | null;
   terminal_id: string | null;
   business_date: string;
   created_at: number;
@@ -89,6 +91,7 @@ export type FinalOrderSnapshot = {
 
 export type SalesLedgerEntryType =
   | "SALE_COMPLETED"
+  | "COMPLIMENTARY_RECORDED"
   | "PAYMENT_RECORDED"
   | "ORDER_VOIDED"
   | "ORDER_PARTIALLY_VOIDED"
@@ -106,9 +109,16 @@ export type SalesLedgerEntry = {
   product_id: string | null;
   product_name: string | null;
   product_category: string | null;
+  tax_code_id: string | null;
+  tax_rate_bps: number;
   quantity: number;
   gross_amount: number;
   tax_amount: number;
+  complimentary_value: number;
+  actor_user_id: string | null;
+  actor_display_name: string | null;
+  actor_role: string | null;
+  actor_device_id: string | null;
   payment_method: string | null;
   terminal_id: string | null;
   provider: string | null;
@@ -128,8 +138,9 @@ export type PosOrderSnapshot = {
   subtotal: number;
   tax_total: number;
   total: number;
+  actor?: OrderActor | null;
   status: "OPEN" | "CLOSED";
-  payment_status: "UNPAID" | "PAID";
+  payment_status: "UNPAID" | "PAID" | "COMPLIMENTARY";
   created_at: number;
   updated_at: number;
   closed_at: number | null;

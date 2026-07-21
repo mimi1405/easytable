@@ -24,10 +24,18 @@ export function normalizeOptionalText(value: string | null | undefined, fallback
 }
 
 export function cloneBasketLines(lines: BasketLine[]) {
-  return lines.map((line) => ({
-    ...line,
-    variants: line.variants.map((variant) => ({ ...variant }))
-  }));
+  return lines.map((line) => {
+    const complimentaryQuantity = Number.isInteger(line.complimentary_quantity)
+      ? Math.max(0, Math.min(line.quantity, line.complimentary_quantity))
+      : 0;
+    return {
+      ...line,
+      complimentary_quantity: complimentaryQuantity,
+      complimentary_value: line.unit_total * complimentaryQuantity,
+      line_total: line.unit_total * (line.quantity - complimentaryQuantity),
+      variants: line.variants.map((variant) => ({ ...variant }))
+    };
+  });
 }
 
 export function kdsTicketId(orderId: string, station: string) {
@@ -76,7 +84,13 @@ export function formatReceiptPrintBody(order: PosOrderSnapshot, payment: Payment
     "",
     ...order.lines.map((line) => {
       const variants = line.variants.map((variant) => variant.variant_item_name).join(", ");
-      return String(line.quantity) + "x " + line.product_name + (variants ? " (" + variants + ")" : "") + "  " + formatMoney(line.line_total);
+      const chargedQuantity = line.quantity - line.complimentary_quantity;
+      return [
+        String(line.quantity) + "x " + line.product_name + (variants ? " (" + variants + ")" : "") + "  " + formatMoney(line.line_total),
+        ...(line.complimentary_quantity > 0
+          ? ["  " + String(chargedQuantity) + " berechnet / " + String(line.complimentary_quantity) + " offeriert (" + formatMoney(line.complimentary_value) + ")"]
+          : [])
+      ].join("\n");
     }),
     "",
     "Zwischensumme: " + formatMoney(order.subtotal),
@@ -105,9 +119,15 @@ export function formatZReportPrintBody(dayClose: StoredDayClose) {
     "Differenz: " + formatMoney(dayClose.cash_difference),
     "Auftraege: " + String(dayClose.order_count),
     "Artikel: " + String(dayClose.item_count),
+    "Offeriert: " + String(dayClose.preview.complimentary_quantity) + " / " + formatMoney(dayClose.preview.complimentary_value),
     "",
     "Produktverkaeufe",
     ...dayClose.preview.product_sales.map(
+      (sale) => String(sale.quantity) + "x " + sale.product_name + "  " + formatMoney(sale.total)
+    ),
+    "",
+    "Offerierte Produkte",
+    ...dayClose.preview.complimentary_sales.map(
       (sale) => String(sale.quantity) + "x " + sale.product_name + "  " + formatMoney(sale.total)
     )
   ].join("\n");

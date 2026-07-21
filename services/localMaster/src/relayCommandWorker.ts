@@ -19,12 +19,13 @@ import { broadcast } from "./realtime.js";
 import { getCatalogSnapshot, pushCatalogToRelay } from "./relayCatalogSync.js";
 import { getOperationsSnapshot, pushOperationsToRelay } from "./relayOperationsSync.js";
 import { reconcilePaymentByProviderTransactionId } from "./paymentRecoveryWorker.js";
-import { acknowledgeStationPickup, createOrderSnapshot, updateKdsTicketStatus } from "./store.js";
+import { acknowledgeStationPickup, adjustComplimentaryQuantity, createOrderSnapshot, updateKdsTicketStatus } from "./store.js";
 import { beginIdempotentCommand, completeIdempotentCommand, failIdempotentCommand } from "./store/commandStore.js";
 import type {
   CatalogCategoryCreateRequest,
   CatalogProductCreateRequest,
   CatalogTaxCreateRequest,
+  AdjustComplimentaryQuantityRequest,
   CreateOrderSnapshotRequest,
   RealtimeEventType
 } from "./types.js";
@@ -111,6 +112,18 @@ async function executeRelayCommand(command: RelayCommand, binding: NonNullable<R
         entity: result,
         operations_snapshot: operationsSnapshot
       });
+      return;
+    }
+
+    if (command.type === "STAFF_COMPLIMENTARY_ADJUST") {
+      const result = adjustComplimentaryQuantity(command.payload as AdjustComplimentaryQuantityRequest);
+      const operationsSnapshot = binding.location_id ? getOperationsSnapshot(binding.location_id) : null;
+      await pushOperationsToRelay(binding);
+      await ackRelayCommandSafely(binding, command.command_id, "accepted", {
+        entity: result,
+        operations_snapshot: operationsSnapshot
+      });
+      broadcast("ORDER_UPDATED", { order: result });
       return;
     }
 
@@ -365,7 +378,8 @@ function toCreateOrderSnapshotRequest(payload: unknown): CreateOrderSnapshotRequ
   return {
     request_id: request.request_id,
     lines: request.lines,
-    table_context: request.table_context ?? null
+    table_context: request.table_context ?? null,
+    actor: request.actor
   };
 }
 

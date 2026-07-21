@@ -12,7 +12,7 @@ import { rebuildStationPrintJobsForOrder, enqueueReceiptPrintJob } from "./print
 import { startWalleeCloudTillPayment } from "./walleeCloudTillProvider.js";
 import { completePaymentRecoveryJobsForAttempt, ensurePaymentRecoveryJob, getPaymentAttempt, updatePaymentAttempt } from "./paymentAttemptStore.js";
 import type { PaymentProviderResult } from "./paymentProviderTypes.js";
-import { recordCompletedSaleSnapshot } from "./reportingStore.js";
+import { recordCompletedSaleSnapshot, recordComplimentarySaleSnapshot } from "./reportingStore.js";
 import {
   payments,
   persistPayments,
@@ -28,8 +28,11 @@ import {
 } from "./storeHelpers.js";
 import { findOpenPosOrderForTable, findOpenStaffOrderForTable, getTableLayout, tableFromContext } from "./tableStore.js";
 import type {
+  AdjustComplimentaryQuantityRequest,
   BasketLine,
   CompleteCashPaymentRequest,
+  CompleteComplimentaryOrderRequest,
+  ComplimentaryOrderResult,
   PaymentResult as CompletedPaymentResult,
   CreatedOrderSnapshot,
   CreateOrderSnapshotRequest,
@@ -67,6 +70,12 @@ export type PaymentResult = {
   replayed?: boolean;
 };
 
+export type ComplimentaryOrderCommandResult = {
+  result: ComplimentaryOrderResult;
+  table: Table | null;
+  replayed?: boolean;
+};
+
 export function listOpenOrders() {
   return [
     ...staffOrders.filter((order) => order.status === "OPEN"),
@@ -100,6 +109,46 @@ export function getOpenTableOrderBasket(tableId: string): OpenTableOrderBasket |
     order_number: staffOrder.orderNumber,
     lines: staffOrder.items.map(staffOrderItemToBasketLine)
   };
+}
+
+export function adjustComplimentaryQuantity(request: AdjustComplimentaryQuantityRequest): OpenTableOrderBasket & { replayed?: boolean } {
+  const command = beginIdempotentCommand("ORDER_COMPLIMENTARY_ADJUST", request.request_id, {
+    order_id: request.order_id,
+    line_id: request.line_id,
+    complimentary_quantity: request.complimentary_quantity,
+    actor: request.actor
+  });
+  if (command.mode === "replay") return { ...(command.result as OpenTableOrderBasket), replayed: true };
+
+  try {
+    const order = posOrders.find((candidate) => candidate.id === request.order_id && candidate.status === "OPEN");
+    if (!order) throw new Error("Open order not found.");
+    const line = order.lines.find((candidate) => candidate.id === request.line_id);
+    if (!line) throw new Error("Order line not found.");
+    if (!Number.isInteger(request.complimentary_quantity) || request.complimentary_quantity < 0 || request.complimentary_quantity > line.quantity) {
+      throw new Error("Complimentary quantity must be between zero and line quantity.");
+    }
+
+    line.complimentary_quantity = request.complimentary_quantity;
+    line.complimentary_value = request.complimentary_quantity * line.unit_total;
+    line.line_total = (line.quantity - request.complimentary_quantity) * line.unit_total;
+    const totals = calculateOrderTotals(order.lines);
+    order.subtotal = totals.subtotal;
+    order.tax_total = totals.taxTotal;
+    order.total = totals.total;
+    order.actor = order.lines.some((candidate) => candidate.complimentary_quantity > 0) ? request.actor : null;
+    order.updated_at = Date.now();
+    persistPosOrders();
+
+    const result: OpenTableOrderBasket = {
+      order_id: order.id,
+      order_number: order.order_number,
+      lines: cloneBasketLines(order.lines)
+    };
+    return completeIdempotentCommand(command.entry, result);
+  } catch (error) {
+    return failIdempotentCommand(command.entry, error);
+  }
 }
 
 export function createOrderSnapshot(request: CreateOrderSnapshotRequest): OrderSnapshotResult {
@@ -173,6 +222,55 @@ export function completeCashPayment(request: CompleteCashPaymentRequest): Paymen
     if (result.payment.lifecycle_state === "completed") {
       appendOutboxEvent("PAYMENT_COMPLETED", result.payment.payment_id, result.payment);
     }
+    return completeIdempotentCommand(command.entry, result);
+  } catch (error) {
+    return failIdempotentCommand(command.entry, error);
+  }
+}
+
+export function completeComplimentaryOrder(request: CompleteComplimentaryOrderRequest): ComplimentaryOrderCommandResult {
+  validateOrderLines(request.lines);
+  if (!request.request_id?.trim()) throw new Error("Complimentary order request_id is required.");
+  if (request.lines.some((line) => line.complimentary_quantity !== line.quantity || line.line_total !== 0)) {
+    throw new Error("Complimentary completion requires every basket unit to be complimentary.");
+  }
+
+  const command = beginIdempotentCommand("ORDER_COMPLIMENTARY_COMPLETE", request.request_id, {
+    lines: request.lines,
+    table_context: request.table_context,
+    terminal_id: request.terminal_id ?? null,
+    actor: request.actor ?? null
+  });
+  if (command.mode === "replay") return { ...(command.result as ComplimentaryOrderCommandResult), replayed: true };
+
+  try {
+    const now = Date.now();
+    const savedOrder = request.table_context ? saveTablePaymentOrderSnapshot(request, now) : saveCounterPaymentOrder(request, now);
+    savedOrder.order.status = "CLOSED";
+    savedOrder.order.payment_status = "COMPLIMENTARY";
+    savedOrder.order.updated_at = now;
+    savedOrder.order.closed_at = now;
+    persistPosOrders();
+
+    if (!savedOrder.continuedExistingOrder) {
+      routeOrderOutputsForOrder(savedOrder.order);
+    }
+    const terminalId = request.terminal_id?.trim() || null;
+    const settlement = complimentarySettlementResult(savedOrder.order, request.request_id, terminalId, now);
+    enqueueReceiptPrintJob(terminalId ?? undefined, savedOrder.order, settlement);
+    recordComplimentarySaleSnapshot(savedOrder.order, request.request_id, terminalId);
+    const result: ComplimentaryOrderCommandResult = {
+      result: {
+        order_id: savedOrder.order.id,
+        order_number: savedOrder.order.order_number,
+        status: "COMPLETED",
+        total: 0,
+        complimentary_value: request.lines.reduce((sum, line) => sum + line.complimentary_value, 0),
+        terminal_id: terminalId,
+        completed_at: now
+      },
+      table: savedOrder.order.table_context ? tableFromContext(savedOrder.order.table_context, "FREE") : null
+    };
     return completeIdempotentCommand(command.entry, result);
   } catch (error) {
     return failIdempotentCommand(command.entry, error);
@@ -512,6 +610,7 @@ function saveTableOrderSnapshot(
     existingOrder.subtotal = totals.subtotal;
     existingOrder.tax_total = totals.taxTotal;
     existingOrder.total = totals.total;
+    existingOrder.actor = request.actor ?? existingOrder.actor ?? null;
     existingOrder.updated_at = now;
     persistPosOrders();
 
@@ -526,6 +625,7 @@ function saveTableOrderSnapshot(
     subtotal: totals.subtotal,
     tax_total: totals.taxTotal,
     total: totals.total,
+    actor: request.actor ?? null,
     status: "OPEN",
     payment_status: "UNPAID",
     created_at: now,
@@ -570,6 +670,7 @@ function saveTablePaymentOrderSnapshot(
     subtotal: totals.subtotal,
     tax_total: totals.taxTotal,
     total: totals.total,
+    actor: request.actor ?? null,
     status: "CLOSED",
     payment_status: "PAID",
     created_at: staffOrder.createdAt,
@@ -599,6 +700,7 @@ function saveCounterPaymentOrder(
     subtotal: totals.subtotal,
     tax_total: totals.taxTotal,
     total: totals.total,
+    actor: request.actor ?? null,
     status: "OPEN",
     payment_status: "UNPAID",
     created_at: now,
@@ -672,6 +774,38 @@ function toPaymentResult(payment: LocalPayment): CompletedPaymentResult {
   };
 }
 
+function complimentarySettlementResult(
+  order: PosOrderSnapshot,
+  requestId: string,
+  terminalId: string | null,
+  completedAt: number
+): CompletedPaymentResult {
+  return {
+    order_id: order.id,
+    order_number: order.order_number,
+    payment_id: "complimentary_" + order.id,
+    payment_attempt_id: null,
+    request_id: requestId,
+    payment_method: "COMPLIMENTARY",
+    amount: 0,
+    received_cash: null,
+    change_given: null,
+    status: "COMPLETED",
+    paid_at: completedAt,
+    terminal_id: terminalId,
+    provider: "LOCAL",
+    provider_transaction_id: null,
+    provider_status: "NOT_REQUIRED",
+    lifecycle_state: "completed",
+    reconciliation_required: false,
+    receipt_print_job_id: null,
+    failure_reason: null,
+    created_at: completedAt,
+    updated_at: completedAt,
+    completed_at: completedAt
+  };
+}
+
 function staffOrderItemToBasketLine(item: OrderItem): BasketLine {
   const product = getProductById(item.productId);
   const unitTotal = item.unitPrice;
@@ -690,6 +824,8 @@ function staffOrderItemToBasketLine(item: OrderItem): BasketLine {
     variants: [],
     unit_total: unitTotal,
     quantity: item.quantity,
+    complimentary_quantity: 0,
+    complimentary_value: 0,
     line_total: item.totalPrice
   };
 }
@@ -905,7 +1041,17 @@ function validateOrderLines(lines: BasketLine[]) {
       throw new Error("Cannot create order snapshot because " + line.product_name + " has an inconsistent unit price.");
     }
 
-    const expectedLineTotal = line.unit_total * line.quantity;
+    const complimentaryQuantity = line.complimentary_quantity ?? 0;
+    if (!Number.isInteger(complimentaryQuantity) || complimentaryQuantity < 0 || complimentaryQuantity > line.quantity) {
+      throw new Error("Cannot create order snapshot with invalid complimentary quantity for " + line.product_name + ".");
+    }
+
+    const expectedComplimentaryValue = line.unit_total * complimentaryQuantity;
+    if ((line.complimentary_value ?? 0) !== expectedComplimentaryValue) {
+      throw new Error("Cannot create order snapshot because " + line.product_name + " has an inconsistent complimentary value.");
+    }
+
+    const expectedLineTotal = line.unit_total * (line.quantity - complimentaryQuantity);
 
     if (expectedLineTotal !== line.line_total) {
       throw new Error("Cannot create order snapshot because " + line.product_name + " has an inconsistent total.");

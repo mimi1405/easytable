@@ -43,7 +43,10 @@ export function getDayClosePreview(request: DayClosePreviewRequest): DayClosePre
     expected_total: report.gross_total,
     order_count: report.order_count,
     item_count: report.item_count,
+    complimentary_quantity: report.complimentary_quantity,
+    complimentary_value: report.complimentary_value,
     product_sales: report.product_sales,
+    complimentary_sales: report.complimentary_sales,
     existing_close: existingClose
       ? {
           counted_cash: existingClose.counted_cash,
