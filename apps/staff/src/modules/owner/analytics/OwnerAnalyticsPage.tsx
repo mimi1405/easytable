@@ -13,7 +13,6 @@ import {
   detectConnectionMode,
   loadPosSettings,
   loadSalesReportForConnection,
-  type ConnectionMode,
   type SalesReport
 } from "../../../lib/local-master";
 import {
@@ -42,9 +41,7 @@ const paymentChartConfig = {
 export function OwnerAnalyticsPage() {
   const [filters, setFilters] = useState<AnalyticsFilters>(() => defaultAnalyticsFilters());
   const [reports, setReports] = useState<SalesReport[]>([]);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("OFFLINE");
   const [isLoading, setIsLoading] = useState(true);
-  const [businessDayCutoverTime, setBusinessDayCutoverTime] = useState("00:00");
 
   const model = useMemo(() => buildAnalyticsViewModel(reports, filters), [filters, reports]);
   const categories = useMemo(() => availableCategories(reports), [reports]);
@@ -54,10 +51,8 @@ export function OwnerAnalyticsPage() {
 
     try {
       const nextMode = await detectConnectionMode();
-      setConnectionMode(nextMode);
       const settings = nextMode === "LOCAL" ? await loadPosSettings().catch(() => null) : null;
       const cutover = settings?.settings.business_day_cutover_time ?? "00:00";
-      setBusinessDayCutoverTime(cutover);
       const dates = datesInRange(filters.from, filters.to);
       const loadedReports = await Promise.all(dates.map((date) => loadSalesReportForConnection(nextMode, date, cutover)));
       setReports(loadedReports);
@@ -97,13 +92,14 @@ export function OwnerAnalyticsPage() {
 
       <AnalyticsFiltersBar filters={filters} categories={categories} onChange={setFilters} onPreset={selectPreset} />
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
         <MetricCard label="Bruttoumsatz" value={formatMoney(model.grossTotal)} />
         <MetricCard label="Netto" value={formatMoney(model.netTotal)} />
         <MetricCard label="Steuern" value={formatMoney(model.taxTotal)} />
         <MetricCard label="Orders" value={String(model.orderCount)} />
         <MetricCard label="Artikel" value={String(model.itemCount)} />
         <MetricCard label="Storno" value={formatMoney(model.stornoTotal)} />
+        <MetricCard label="Offeriert" value={`${model.complimentaryQuantity} / ${formatMoney(model.complimentaryValue)}`} />
       </section>
 
       {isLoading ? (
@@ -235,6 +231,23 @@ function AnalyticsTables({ model }: { model: ReturnType<typeof buildAnalyticsVie
     <section className="grid gap-4 xl:grid-cols-2">
       <Card>
         <CardHeader>
+          <CardTitle>Offerierte Produkte</CardTitle>
+          <CardDescription>Listenwert und Menge nach Produkt und Bedienperson</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader><TableRow><TableHead>Produkt</TableHead><TableHead>Bedienperson</TableHead><TableHead className="text-right">Menge</TableHead><TableHead className="text-right">Listenwert</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {model.complimentaryRows.slice(0, 20).map((row) => (
+                <TableRow key={row.key}><TableCell className="font-medium">{row.productName}</TableCell><TableCell>{row.actorName}</TableCell><TableCell className="text-right">{row.quantity}</TableCell><TableCell className="text-right">{formatMoney(row.value)}</TableCell></TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Produktumsatz</CardTitle>
           <CardDescription>Snapshot-basierte Produkte, keine aktuellen Catalog-Werte</CardDescription>
         </CardHeader>
@@ -283,7 +296,7 @@ function AnalyticsTables({ model }: { model: ReturnType<typeof buildAnalyticsVie
                   <TableCell><Badge variant="secondary">{formatEntryType(entry.entry_type)}</Badge></TableCell>
                   <TableCell>{entry.order_number}</TableCell>
                   <TableCell>{entry.reason ?? "-"}</TableCell>
-                  <TableCell className="text-right">{formatMoney(entry.gross_amount)}</TableCell>
+                  <TableCell className="text-right">{formatMoney(entry.entry_type === "COMPLIMENTARY_RECORDED" ? entry.complimentary_value : entry.gross_amount)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -324,6 +337,7 @@ function formatShortMoney(amount: number) {
 
 function formatEntryType(type: string) {
   if (type === "SALE_COMPLETED") return "Sale";
+  if (type === "COMPLIMENTARY_RECORDED") return "Offeriert";
   if (type === "PAYMENT_RECORDED") return "Payment";
   if (type === "ORDER_VOIDED") return "Vollstorno";
   if (type === "ORDER_PARTIALLY_VOIDED") return "Teilstorno";

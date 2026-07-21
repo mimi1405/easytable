@@ -70,6 +70,34 @@ test("analytics keeps product rows separated by snapshot identity values", () =>
   assert.deepEqual(model.productRows.map((row) => row.productCategory).sort(), ["Dinner", "Lunch"]);
 });
 
+test("analytics groups complimentary value by product and operator without increasing revenue", () => {
+  const offered = entry({
+    entryType: "COMPLIMENTARY_RECORDED",
+    orderId: "order_offer",
+    productId: "prod_offer",
+    productName: "Bier",
+    category: "Bar",
+    quantity: 2,
+    gross: 0,
+    tax: 0
+  });
+  offered.complimentary_value = 1000;
+  offered.actor_user_id = "user_1";
+  offered.actor_display_name = "Anna";
+  const model = buildAnalyticsViewModel([report("2026-07-08", [offered])], baseFilters);
+
+  assert.equal(model.grossTotal, 0);
+  assert.equal(model.complimentaryQuantity, 2);
+  assert.equal(model.complimentaryValue, 1000);
+  assert.deepEqual(model.complimentaryRows, [{
+    key: "prod_offer:user_1",
+    productName: "Bier",
+    actorName: "Anna",
+    quantity: 2,
+    value: 1000
+  }]);
+});
+
 function report(date: string, entries: SalesLedgerEntry[]): SalesReport {
   return {
     business_date: date,
@@ -79,8 +107,11 @@ function report(date: string, entries: SalesLedgerEntry[]): SalesReport {
     tax_total: 0,
     order_count: 0,
     item_count: 0,
+    complimentary_quantity: 0,
+    complimentary_value: 0,
     payment_totals: { cash: 0, wallee_terminal: 0 },
     product_sales: [],
+    complimentary_sales: [],
     entries
   };
 }
@@ -157,9 +188,16 @@ function entry(input: Partial<EntryInput>): SalesLedgerEntry {
     product_id: input.productId === undefined ? "prod_1" : input.productId,
     product_name: input.productName === undefined ? "Produkt" : input.productName,
     product_category: input.category === undefined ? "Bar" : input.category,
+    tax_code_id: "tax_normal",
+    tax_rate_bps: 810,
     quantity: input.quantity ?? 1,
     gross_amount: input.gross ?? 1000,
     tax_amount: input.tax ?? 75,
+    complimentary_value: 0,
+    actor_user_id: null,
+    actor_display_name: null,
+    actor_role: null,
+    actor_device_id: null,
     payment_method: input.method ?? "CASH",
     terminal_id: input.terminalId ?? "terminal_a",
     provider: null,

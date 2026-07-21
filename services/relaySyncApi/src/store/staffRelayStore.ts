@@ -11,6 +11,7 @@ import { publishCommandEvent } from "../lib/nats.js";
 import { broadcastRelayLocationEvent } from "../lib/realtime.js";
 import type {
   RelayCommand,
+  StaffComplimentaryAdjustRelayRequest,
   StaffOrderSnapshotRelayRequest,
   StaffRelayCommandResponse,
   TenantUserRole
@@ -42,6 +43,13 @@ export async function createStaffOrderRelayCommand(
     request_id: requestId,
     lines: Array.isArray(request.lines) ? request.lines : [],
     table_context: request.table_context,
+    actor: {
+      user_id: session.user_id,
+      display_name: session.display_name,
+      role: session.role,
+      device_id: "relay_staff",
+      terminal_id: null
+    },
     submitted_by: {
       user_id: session.user_id,
       display_name: session.display_name,
@@ -84,6 +92,61 @@ export async function createStaffOrderRelayCommand(
     });
   }
 
+  return toStaffRelayCommand(rows[0]);
+}
+
+export async function createStaffComplimentaryAdjustRelayCommand(
+  headers: IncomingHttpHeaders,
+  locationId: string,
+  orderId: string,
+  request: StaffComplimentaryAdjustRelayRequest
+): Promise<StaffRelayCommandResponse> {
+  const session = await requireStaffSession(headers, locationId);
+  const location = await requireRelayLocation(session.tenant_id, locationId);
+  const requestId = normalizeRequiredText(request.request_id, "request_id is required.");
+  const commandId = "staff_complimentary_" + createHash("sha256")
+    .update(session.tenant_id + ":" + locationId + ":" + requestId).digest("hex");
+  const payload = {
+    request_id: requestId,
+    order_id: normalizeRequiredText(orderId, "order_id is required."),
+    line_id: normalizeRequiredText(request.line_id, "line_id is required."),
+    complimentary_quantity: request.complimentary_quantity,
+    actor: {
+      user_id: session.user_id,
+      display_name: session.display_name,
+      role: session.role,
+      device_id: "relay_staff",
+      terminal_id: null
+    }
+  };
+  const existing = await getRelayCommand(session, commandId);
+  if (existing) {
+    if (fingerprint(existing.payloadJson) !== fingerprint(payload)) {
+      throw new ApiError("request_id was already used with a different payload.", 409);
+    }
+    return toStaffRelayCommand(existing);
+  }
+  const rows = await getDrizzleDatabase().insert(relayCommands).values({
+    id: commandId,
+    tenantId: session.tenant_id,
+    locationId,
+    localMasterInstanceId: location.localMasterInstanceId,
+    type: "STAFF_COMPLIMENTARY_ADJUST",
+    status: "pending",
+    payloadJson: payload,
+    resultJson: null,
+    deliveredAt: null,
+    completedAt: null,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  }).returning();
+  if (rows[0] && location.localMasterInstanceId) {
+    void publishCommandEvent(session.tenant_id, locationId, location.localMasterInstanceId, commandId);
+    broadcastRelayLocationEvent(session.tenant_id, locationId, {
+      type: "RELAY_COMMAND_UPDATED",
+      payload: toStaffRelayCommand(rows[0])
+    });
+  }
   return toStaffRelayCommand(rows[0]);
 }
 

@@ -118,6 +118,7 @@ async function upsertSnapshot(tx: Parameters<Parameters<ReturnType<typeof getDri
     order_number?: string;
     snapshot_type?: string;
     table_context?: unknown;
+    actor?: unknown;
     lines?: BasketLine[];
     subtotal?: number;
     tax_total?: number;
@@ -154,6 +155,7 @@ async function upsertSnapshot(tx: Parameters<Parameters<ReturnType<typeof getDri
       orderNumber: required(snapshot.order_number, "Snapshot order number is required."),
       snapshotType: snapshot.snapshot_type ?? "PAID",
       tableContextJson: snapshot.table_context ?? null,
+      actorJson: snapshot.actor ?? null,
       subtotal: integer(snapshot.subtotal, "Snapshot subtotal is invalid."),
       taxTotal: integer(snapshot.tax_total, "Snapshot tax total is invalid."),
       total: integer(snapshot.total, "Snapshot total is invalid."),
@@ -202,6 +204,8 @@ async function upsertSnapshot(tx: Parameters<Parameters<ReturnType<typeof getDri
         variantsJson: line.variants ?? [],
         unitTotal: integer(line.unit_total, "Unit total is invalid."),
         quantity: integer(line.quantity, "Quantity is invalid."),
+        complimentaryQuantity: integer(line.complimentary_quantity ?? 0, "Complimentary quantity is invalid."),
+        complimentaryValue: integer(line.complimentary_value ?? 0, "Complimentary value is invalid."),
         lineTotal: integer(line.line_total, "Line total is invalid."),
         localCreatedAt: toDate(snapshot.created_at),
         updatedAt: now
@@ -210,6 +214,8 @@ async function upsertSnapshot(tx: Parameters<Parameters<ReturnType<typeof getDri
         target: orderSnapshotLines.id,
         set: {
           quantity: integer(line.quantity, "Quantity is invalid."),
+          complimentaryQuantity: integer(line.complimentary_quantity ?? 0, "Complimentary quantity is invalid."),
+          complimentaryValue: integer(line.complimentary_value ?? 0, "Complimentary value is invalid."),
           lineTotal: integer(line.line_total, "Line total is invalid."),
           updatedAt: now
         }
@@ -242,9 +248,16 @@ async function upsertLedgerEntries(tx: Parameters<Parameters<ReturnType<typeof g
         productId: nullableString(entry.product_id),
         productName: nullableString(entry.product_name),
         productCategory: nullableString(entry.product_category),
+        taxCodeId: nullableString(entry.tax_code_id),
+        taxRateBps: integer(entry.tax_rate_bps ?? 0, "Ledger tax rate is invalid."),
         quantity: integer(entry.quantity, "Ledger quantity is invalid."),
         grossAmount: integer(entry.gross_amount, "Ledger gross amount is invalid."),
         taxAmount: integer(entry.tax_amount, "Ledger tax amount is invalid."),
+        complimentaryValue: integer(entry.complimentary_value ?? 0, "Ledger complimentary value is invalid."),
+        actorUserId: nullableString(entry.actor_user_id),
+        actorDisplayName: nullableString(entry.actor_display_name),
+        actorRole: nullableString(entry.actor_role),
+        actorDeviceId: nullableString(entry.actor_device_id),
         paymentMethod: nullableString(entry.payment_method),
         terminalId: nullableString(entry.terminal_id),
         provider: nullableString(entry.provider),
@@ -261,6 +274,7 @@ async function upsertLedgerEntries(tx: Parameters<Parameters<ReturnType<typeof g
         set: {
           grossAmount: integer(entry.gross_amount, "Ledger gross amount is invalid."),
           taxAmount: integer(entry.tax_amount, "Ledger tax amount is invalid."),
+          complimentaryValue: integer(entry.complimentary_value ?? 0, "Ledger complimentary value is invalid."),
           updatedAt: now
         }
       });

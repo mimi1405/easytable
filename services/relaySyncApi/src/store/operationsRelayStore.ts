@@ -292,6 +292,8 @@ function toBasketLine(row: OrderItemRow): BasketLine {
     variants: note.variants,
     unit_total: row.unitPrice,
     quantity: row.quantity,
+    complimentary_quantity: 0,
+    complimentary_value: 0,
     line_total: row.totalPrice
   };
 }

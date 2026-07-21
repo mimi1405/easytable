@@ -19,6 +19,8 @@ export type AnalyticsViewModel = {
   orderCount: number;
   itemCount: number;
   stornoTotal: number;
+  complimentaryQuantity: number;
+  complimentaryValue: number;
   paymentTotals: {
     cash: number;
     walleeTerminal: number;
@@ -31,6 +33,13 @@ export type AnalyticsViewModel = {
     productCategory: string;
     quantity: number;
     total: number;
+  }>;
+  complimentaryRows: Array<{
+    key: string;
+    productName: string;
+    actorName: string;
+    quantity: number;
+    value: number;
   }>;
   ledgerRows: SalesLedgerEntry[];
 };
@@ -89,6 +98,7 @@ export function buildAnalyticsViewModel(reports: SalesReport[], filters: Analyti
   const saleEntries = entries.filter((entry) => saleEntryTypes.has(entry.entry_type));
   const paymentEntries = entries.filter((entry) => entry.entry_type === "PAYMENT_RECORDED" || entry.entry_type === "REFUND_RECORDED");
   const stornoEntries = saleEntries.filter((entry) => entry.gross_amount < 0);
+  const complimentaryEntries = entries.filter((entry) => entry.entry_type === "COMPLIMENTARY_RECORDED");
   const productRows = buildProductRows(saleEntries);
 
   return {
@@ -98,6 +108,8 @@ export function buildAnalyticsViewModel(reports: SalesReport[], filters: Analyti
     orderCount: new Set(saleEntries.filter((entry) => entry.entry_type === "SALE_COMPLETED").map((entry) => entry.order_id)).size,
     itemCount: sum(saleEntries, "quantity"),
     stornoTotal: Math.abs(sum(stornoEntries, "gross_amount")),
+    complimentaryQuantity: sum(complimentaryEntries, "quantity"),
+    complimentaryValue: sum(complimentaryEntries, "complimentary_value"),
     paymentTotals: {
       cash: sum(paymentEntries.filter((entry) => entry.payment_method === "CASH"), "gross_amount"),
       walleeTerminal: sum(paymentEntries.filter((entry) => entry.payment_method === "WALLEE_TERMINAL"), "gross_amount")
@@ -108,8 +120,26 @@ export function buildAnalyticsViewModel(reports: SalesReport[], filters: Analyti
       { method: "Wallee", total: sum(paymentEntries.filter((entry) => entry.payment_method === "WALLEE_TERMINAL"), "gross_amount") }
     ].filter((entry) => entry.total !== 0),
     productRows,
+    complimentaryRows: buildComplimentaryRows(complimentaryEntries),
     ledgerRows: entries.sort((left, right) => right.occurred_at - left.occurred_at)
   };
+}
+
+function buildComplimentaryRows(entries: SalesLedgerEntry[]) {
+  const rows = new Map<string, AnalyticsViewModel["complimentaryRows"][number]>();
+  for (const entry of entries) {
+    if (!entry.product_name) continue;
+    const actorName = entry.actor_display_name ?? "Unbekannt";
+    const key = [entry.product_id ?? entry.product_name, entry.actor_user_id ?? actorName].join(":");
+    const current = rows.get(key);
+    if (current) {
+      current.quantity += entry.quantity;
+      current.value += entry.complimentary_value;
+    } else {
+      rows.set(key, { key, productName: entry.product_name, actorName, quantity: entry.quantity, value: entry.complimentary_value });
+    }
+  }
+  return Array.from(rows.values()).sort((left, right) => right.value - left.value || left.productName.localeCompare(right.productName));
 }
 
 export function availableCategories(reports: SalesReport[]) {

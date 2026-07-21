@@ -234,7 +234,9 @@ test("financial events from LocalMaster populate read models idempotently", { sk
         station: "Bar",
         variants: [],
         unit_total: 1000,
-        quantity: 1,
+        quantity: 2,
+        complimentary_quantity: 1,
+        complimentary_value: 1000,
         line_total: 1000
       }],
       payment: {
@@ -285,6 +287,37 @@ test("financial events from LocalMaster populate read models idempotently", { sk
         reason: null,
         business_date: "2026-07-08",
         occurred_at: paidAt
+      }, {
+        id: "ledger_complimentary_" + seed.suffix,
+        request_id: "pay_req_" + seed.suffix,
+        entry_type: "COMPLIMENTARY_RECORDED",
+        order_id: "order_" + seed.suffix,
+        order_number: "R-" + seed.suffix,
+        payment_id: "pay_" + seed.suffix,
+        original_entry_id: null,
+        line_id: "line_1",
+        product_id: "prod_1",
+        product_name: "Espresso",
+        product_category: "Bar",
+        tax_code_id: "vat",
+        tax_rate_bps: 810,
+        quantity: 1,
+        gross_amount: 0,
+        tax_amount: 0,
+        complimentary_value: 1000,
+        actor_user_id: "user_offer",
+        actor_display_name: "Anna",
+        actor_role: "STAFF",
+        actor_device_id: "staff_device",
+        payment_method: "CASH",
+        terminal_id: "terminal_1",
+        provider: "LOCAL",
+        provider_transaction_id: null,
+        provider_refund_id: null,
+        provider_status: "LOCAL_COMPLETED",
+        reason: null,
+        business_date: "2026-07-08",
+        occurred_at: paidAt
       }]
     }
   };
@@ -321,7 +354,10 @@ test("financial events from LocalMaster populate read models idempotently", { sk
 
   assert.equal(snapshots.length, 1);
   assert.equal(lines.length, 1);
-  assert.equal(ledger.length, 1);
+  assert.equal(ledger.length, 2);
+  assert.equal(lines[0]?.complimentaryQuantity, 1);
+  assert.equal(lines[0]?.complimentaryValue, 1000);
+  assert.equal(ledger.find((entry) => entry.entryType === "COMPLIMENTARY_RECORDED")?.actorUserId, "user_offer");
   assert.equal(outbox.length, 2);
 });
 

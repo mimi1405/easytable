@@ -3,15 +3,17 @@ import type { FastifyInstance } from "fastify";
 import { openRelayLocationEventStream } from "../lib/realtime.js";
 import { getStaffOutputStations, getStaffProducts, getStaffProductVariantGroups } from "../store/catalogRelayStore.js";
 import { getRelayOpenTableOrderBasket, listRelayKdsTickets, listRelayStationPickups } from "../store/operationsRelayStore.js";
+import { getRelaySalesReport } from "../store/reportingRelayStore.js";
 import {
   createKdsTicketStatusRelayCommand,
+  createStaffComplimentaryAdjustRelayCommand,
   createStaffOrderRelayCommand,
   createStaffPickupAcknowledgeRelayCommand,
   getStaffRelayCommand,
   requireStaffSession
 } from "../store/staffRelayStore.js";
 import { getStaffTableLayout } from "../store/tableLayoutStore.js";
-import type { StaffOrderSnapshotRelayRequest } from "../types.js";
+import type { StaffComplimentaryAdjustRelayRequest, StaffOrderSnapshotRelayRequest } from "../types.js";
 
 export async function registerStaffRoutes(app: FastifyInstance) {
   app.get<{ Params: { locationId: string } }>("/api/staff/locations/:locationId/realtime", async (request, reply) => {
@@ -25,8 +27,23 @@ export async function registerStaffRoutes(app: FastifyInstance) {
       reply.code(202).send(await createStaffOrderRelayCommand(request.headers, request.params.locationId, request.body))
   );
 
+  app.post<{ Params: { locationId: string; orderId: string }; Body: StaffComplimentaryAdjustRelayRequest }>(
+    "/api/staff/locations/:locationId/orders/:orderId/complimentary",
+    async (request, reply) => reply.code(202).send(await createStaffComplimentaryAdjustRelayCommand(
+      request.headers,
+      request.params.locationId,
+      request.params.orderId,
+      request.body
+    ))
+  );
+
   app.get<{ Params: { locationId: string } }>("/api/staff/locations/:locationId/table-layout", async (request) =>
     getStaffTableLayout(request.headers, request.params.locationId)
+  );
+
+  app.get<{ Params: { locationId: string }; Querystring: { business_date?: string } }>(
+    "/api/staff/locations/:locationId/reporting/sales",
+    async (request) => getRelaySalesReport(request.headers, request.params.locationId, request.query.business_date ?? "")
   );
 
   app.get<{ Params: { locationId: string } }>("/api/staff/locations/:locationId/products", async (request) =>

@@ -325,6 +325,12 @@ export type StaffOrderSnapshotRelayRequest = {
   table_context: unknown;
 };
 
+export type StaffComplimentaryAdjustRelayRequest = {
+  request_id: string;
+  line_id: string;
+  complimentary_quantity: number;
+};
+
 export type StaffRelayCommandResponse = RelayCommand & {
   poll_url: string;
 };
@@ -351,6 +357,8 @@ export type BasketLine = {
   variants: BasketLineVariant[];
   unit_total: number;
   quantity: number;
+  complimentary_quantity: number;
+  complimentary_value: number;
   line_total: number;
 };
 

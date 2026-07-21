@@ -138,7 +138,17 @@ export type BasketLine = {
   variants: BasketLineVariant[];
   unit_total: number;
   quantity: number;
+  complimentary_quantity: number;
+  complimentary_value: number;
   line_total: number;
+};
+
+export type OrderActor = {
+  user_id: string;
+  display_name: string;
+  role: string;
+  device_id: string;
+  terminal_id: string | null;
 };
 
 export type CreatedOrderSnapshot = {
@@ -158,7 +168,7 @@ export type CreatedOrderSnapshot = {
 export type SalesLedgerEntry = {
   id: string;
   request_id: string;
-  entry_type: "SALE_COMPLETED" | "PAYMENT_RECORDED" | "ORDER_VOIDED" | "ORDER_PARTIALLY_VOIDED" | "REFUND_RECORDED";
+  entry_type: "SALE_COMPLETED" | "COMPLIMENTARY_RECORDED" | "PAYMENT_RECORDED" | "ORDER_VOIDED" | "ORDER_PARTIALLY_VOIDED" | "REFUND_RECORDED";
   order_id: string;
   order_number: string;
   payment_id: string | null;
@@ -167,9 +177,16 @@ export type SalesLedgerEntry = {
   product_id: string | null;
   product_name: string | null;
   product_category: string | null;
+  tax_code_id: string | null;
+  tax_rate_bps: number;
   quantity: number;
   gross_amount: number;
   tax_amount: number;
+  complimentary_value: number;
+  actor_user_id: string | null;
+  actor_display_name: string | null;
+  actor_role: string | null;
+  actor_device_id: string | null;
   payment_method: string | null;
   terminal_id: string | null;
   provider: string | null;
@@ -189,11 +206,20 @@ export type SalesReport = {
   tax_total: number;
   order_count: number;
   item_count: number;
+  complimentary_quantity: number;
+  complimentary_value: number;
   payment_totals: {
     cash: number;
     wallee_terminal: number;
   };
   product_sales: Array<{
+    product_id: string;
+    product_name: string;
+    product_category: string;
+    quantity: number;
+    total: number;
+  }>;
+  complimentary_sales: Array<{
     product_id: string;
     product_name: string;
     product_category: string;
@@ -589,7 +615,14 @@ export function loadSalesReportForConnection(connectionMode: ConnectionMode, bus
   }
 
   if (connectionMode === "RELAY") {
-    throw new Error("Cloud Analytics ist erst verfuegbar, wenn Snapshot/Ledger-Sync in RelaySyncApi aktiv ist.");
+    const locationId = requireStaffRelayLocationId();
+    const query = new URLSearchParams({
+      business_date: businessDate,
+      business_day_cutover_time: businessDayCutoverTime
+    });
+    return readRelayJson<SalesReport>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/reporting/sales?" + query.toString()
+    );
   }
 
   throw new Error(describeConnectionUnavailable());
@@ -735,6 +768,36 @@ export async function createOrderSnapshotForConnection(
   return createRelayOrderSnapshot(requestWithId);
 }
 
+export async function adjustComplimentaryQuantityForConnection(
+  connectionMode: ConnectionMode,
+  orderId: string,
+  lineId: string,
+  complimentaryQuantity: number
+) {
+  const request = {
+    request_id: "complimentary_" + crypto.randomUUID(),
+    line_id: lineId,
+    complimentary_quantity: complimentaryQuantity
+  };
+  if (connectionMode === "LOCAL") {
+    return writeJson<OpenTableOrderBasket>(
+      "/api/orders/" + encodeURIComponent(orderId) + "/complimentary",
+      "POST",
+      { request }
+    );
+  }
+  if (connectionMode === "RELAY") {
+    const locationId = requireStaffRelayLocationId();
+    const command = await writeRelayJson<StaffRelayCommand>(
+      "/api/staff/locations/" + encodeURIComponent(locationId) + "/orders/" + encodeURIComponent(orderId) + "/complimentary",
+      "POST",
+      request
+    );
+    return waitForRelayCommandAccepted<OpenTableOrderBasket>(command);
+  }
+  throw new Error(describeConnectionUnavailable());
+}
+
 export function describeConnectionUnavailable() {
   if (!getRelaySyncUrl()) {
     return "LocalMaster nicht erreichbar und Relay-URL fehlt.";
@@ -756,11 +819,14 @@ function emptySalesReport(businessDate: string): SalesReport {
     tax_total: 0,
     order_count: 0,
     item_count: 0,
+    complimentary_quantity: 0,
+    complimentary_value: 0,
     payment_totals: {
       cash: 0,
       wallee_terminal: 0
     },
     product_sales: [],
+    complimentary_sales: [],
     entries: []
   };
 }
@@ -783,27 +849,7 @@ async function createRelayOrderSnapshot(request: {
     request,
   );
 
-  return waitForRelayOrderAccepted(command);
-}
-
-async function waitForRelayOrderAccepted(command: StaffRelayCommand): Promise<CreatedOrderSnapshot> {
-  let current = command;
-
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (current.status === "accepted") {
-      return current.result as CreatedOrderSnapshot;
-    }
-
-    if (current.status === "failed") {
-      const result = current.result as { error?: string } | null;
-      throw new Error(result?.error ?? "Relay Command fehlgeschlagen.");
-    }
-
-    await new Promise((resolve) => window.setTimeout(resolve, 750));
-    current = await readRelayJson<StaffRelayCommand>(current.poll_url);
-  }
-
-  throw new Error("Relay Command wartet noch auf LocalMaster.");
+  return waitForRelayCommandAccepted<CreatedOrderSnapshot>(command);
 }
 
 export function loadStationPickups(status: StationPickupStatus | "ALL" = "READY") {
@@ -1356,7 +1402,15 @@ async function fetchLocalMaster(input: string, init?: RequestInit) {
   const timeout = window.setTimeout(() => controller.abort(), 1_200);
 
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    const token = window.localStorage.getItem("easytable.staff.local-session");
+    return await fetch(input, {
+      ...init,
+      headers: {
+        ...(init?.headers ?? {}),
+        ...(token ? { Authorization: "Bearer " + token } : {})
+      },
+      signal: controller.signal
+    });
   } finally {
     window.clearTimeout(timeout);
   }
@@ -1400,12 +1454,13 @@ async function writeRelayJson<T>(path: string, method: "POST" | "PATCH" | "DELET
   return parseJsonResponse(response, undefined as T);
 }
 
-async function waitForRelayCommandAccepted(command: StaffRelayCommand): Promise<unknown> {
+async function waitForRelayCommandAccepted<T = unknown>(command: StaffRelayCommand): Promise<T> {
   let current = command;
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     if (current.status === "accepted") {
-      return current.result;
+      const result = current.result as { entity?: T } | T;
+      return result && typeof result === "object" && "entity" in result ? result.entity as T : result as T;
     }
 
     if (current.status === "failed") {
